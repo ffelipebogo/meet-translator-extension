@@ -1,0 +1,913 @@
+/**
+ * Estilos da caixa flutuante de tradução
+ * Google Meet Live Translator
+ */
+
+/* ============================================
+   CAIXA PRINCIPAL DE TRADUÇÃO
+   ============================================ */
+
+#meet-translator-box {
+  position: fixed;
+  bottom: 120px;
+  right: 20px;
+  width: 480px;
+  min-width: 320px;
+  max-width: 800px;
+  min-height: 200px;
+  max-height: 600px;
+  background: rgba(15, 15, 20, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 0 30px rgba(26, 115, 232, 0.15);
+  z-index: 9999;
+  font-family: 'Google Sans', 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(100px);
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#meet-translator-box.mt-resizing {
+  transition: none;
+}
+
+#meet-translator-box.mt-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+
+.mt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+  cursor: grab;
+  user-select: none;
+}
+
+.mt-header:active {
+  cursor: grabbing;
+}
+
+.mt-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mt-icon {
+  font-size: 20px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+.mt-badge {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mt-badge-active,
+.mt-badge:not(.mt-badge-inactive) {
+  background: rgba(52, 199, 89, 0.9);
+  color: #ffffff;
+}
+
+.mt-badge-inactive {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.mt-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.mt-btn-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mt-btn-icon:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: scale(1.05);
+}
+
+.mt-btn-icon:active {
+  transform: scale(0.95);
+}
+
+/* ============================================
+   CONTEÚDO
+   ============================================ */
+
+.mt-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* ============================================
+   SEÇÃO DO FALANTE
+   ============================================ */
+
+.mt-speaker-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(255, 193, 7, 0.15) 0%, rgba(255, 152, 0, 0.1) 100%);
+  border-radius: 10px;
+  border-left: 4px solid #ffc107;
+  transition: all 0.3s ease;
+}
+
+.mt-speaker-section.mt-speaker-highlight {
+  background: linear-gradient(135deg, rgba(255, 193, 7, 0.3) 0%, rgba(255, 152, 0, 0.2) 100%);
+  transform: scale(1.02);
+}
+
+.mt-speaker-icon {
+  font-size: 18px;
+  animation: mt-pulse 2s ease-in-out infinite;
+}
+
+.mt-speaker-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffd54f;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mt-section {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 4px solid;
+  transition: all 0.2s ease;
+}
+
+.mt-section:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mt-original {
+  border-left-color: #34c759;
+}
+
+.mt-translated {
+  border-left-color: #1a73e8;
+  background: rgba(26, 115, 232, 0.1);
+}
+
+.mt-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 6px;
+}
+
+.mt-text {
+  font-size: 15px;
+  line-height: 1.5;
+  color: #ffffff;
+  word-wrap: break-word;
+  min-height: 24px;
+  transition: opacity 0.2s ease;
+}
+
+.mt-original .mt-text {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.mt-translated .mt-text {
+  color: #ffffff;
+  font-weight: 500;
+}
+
+/* ============================================
+   LOADING
+   ============================================ */
+
+.mt-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+}
+
+.mt-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #1a73e8;
+  border-radius: 50%;
+  animation: mt-spin 0.8s linear infinite;
+}
+
+@keyframes mt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================
+   ERRO
+   ============================================ */
+
+.mt-error {
+  padding: 10px 14px;
+  background: rgba(234, 67, 53, 0.15);
+  border: 1px solid rgba(234, 67, 53, 0.3);
+  border-radius: 8px;
+  color: #f28b82;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mt-error::before {
+  content: '⚠️';
+}
+
+/* ============================================
+   HISTÓRICO DE MENSAGENS
+   ============================================ */
+
+.mt-history-section {
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+}
+
+.mt-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mt-history-toggle {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.mt-history-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mt-history-section.mt-history-collapsed .mt-history-list {
+  display: none;
+}
+
+.mt-history-section.mt-history-collapsed .mt-history-header {
+  margin-bottom: 0;
+}
+
+.mt-history-empty {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 12px;
+  text-align: center;
+}
+
+.mt-history-item {
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  border-left: 3px solid rgba(26, 115, 232, 0.5);
+  font-size: 13px;
+}
+
+.mt-history-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  gap: 8px;
+}
+
+.mt-history-speaker {
+  font-weight: 600;
+  color: #ffd54f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mt-history-time {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+}
+
+.mt-history-original {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 12px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.mt-history-translated {
+  color: rgba(255, 255, 255, 0.95);
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.mt-history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mt-history-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+.mt-history-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.mt-history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* ============================================
+   FOOTER
+   ============================================ */
+
+.mt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.mt-stats,
+.mt-api {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+}
+
+.mt-api {
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+/* ============================================
+   TOAST NOTIFICATION
+   ============================================ */
+
+.mt-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  padding: 12px 24px;
+  background: rgba(30, 30, 35, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  color: #ffffff;
+  font-family: 'Google Sans', 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.1);
+  z-index: 10000;
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mt-toast-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ============================================
+   RESPONSIVIDADE
+   ============================================ */
+
+@media (max-width: 768px) {
+  #meet-translator-box {
+    width: 95vw;
+    max-width: none;
+    right: 2.5vw;
+    bottom: 20px;
+  }
+
+  .mt-header {
+    padding: 12px 14px;
+  }
+
+  .mt-title {
+    font-size: 14px;
+  }
+
+  .mt-content {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .mt-section {
+    padding: 10px 12px;
+  }
+
+  .mt-text {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  #meet-translator-box {
+    width: 100vw;
+    right: 0;
+    bottom: 0;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .mt-header {
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+/* ============================================
+   ANIMAÇÕES
+   ============================================ */
+
+@keyframes mt-fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes mt-slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes mt-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Animação do texto traduzido quando atualiza */
+.mt-translated .mt-text {
+  animation: mt-fadeIn 0.3s ease;
+}
+
+/* ============================================
+   TEMA ESCURO (já é o padrão)
+   ============================================ */
+
+/* ============================================
+   TEMA CLARO (opcional)
+   ============================================ */
+
+#meet-translator-box.mt-theme-light {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.15),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+#meet-translator-box.mt-theme-light .mt-content {
+  background: transparent;
+}
+
+#meet-translator-box.mt-theme-light .mt-section {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+#meet-translator-box.mt-theme-light .mt-section:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+#meet-translator-box.mt-theme-light .mt-label {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+#meet-translator-box.mt-theme-light .mt-text {
+  color: #202124;
+}
+
+#meet-translator-box.mt-theme-light .mt-original .mt-text {
+  color: rgba(0, 0, 0, 0.8);
+}
+
+#meet-translator-box.mt-theme-light .mt-footer {
+  background: rgba(0, 0, 0, 0.03);
+  border-top-color: rgba(0, 0, 0, 0.05);
+}
+
+#meet-translator-box.mt-theme-light .mt-stats,
+#meet-translator-box.mt-theme-light .mt-api {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+#meet-translator-box.mt-theme-light .mt-api {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-section {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-header {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-empty {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-item {
+  background: rgba(0, 0, 0, 0.04);
+  border-left-color: rgba(26, 115, 232, 0.4);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-speaker {
+  color: #b8860b;
+}
+
+#meet-translator-box.mt-theme-light .mt-history-time {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-original {
+  color: rgba(0, 0, 0, 0.7);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-translated {
+  color: #202124;
+}
+
+#meet-translator-box.mt-theme-light .mt-history-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+#meet-translator-box.mt-theme-light .mt-history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================
+   UTILITÁRIOS
+   ============================================ */
+
+.mt-hidden {
+  display: none !important;
+}
+
+.mt-no-select {
+  user-select: none;
+}
+
+/* Efeito de brilho no hover do header */
+.mt-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  transition: transform 0.6s ease;
+}
+
+.mt-header:hover::before {
+  transform: translateX(100%);
+}
+
+/* Scrollbar customizada para textos longos */
+.mt-text {
+  max-height: 150px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.mt-text::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mt-text::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mt-text::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.mt-text::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* ============================================
+   HANDLES DE REDIMENSIONAMENTO
+   ============================================ */
+
+.mt-resize-handle {
+  position: absolute;
+  background: transparent;
+  z-index: 10;
+}
+
+/* Handles das bordas */
+.mt-resize-n {
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.mt-resize-s {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.mt-resize-e {
+  top: 10px;
+  right: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.mt-resize-w {
+  top: 10px;
+  left: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+/* Handles dos cantos */
+.mt-resize-ne {
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nesw-resize;
+}
+
+.mt-resize-nw {
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+
+.mt-resize-se {
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+
+.mt-resize-sw {
+  bottom: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nesw-resize;
+}
+
+/* Indicador visual de resize nos cantos */
+.mt-resize-se::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid rgba(255, 255, 255, 0.3);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 0 0 4px 0;
+  transition: border-color 0.2s ease;
+}
+
+.mt-resize-se:hover::after {
+  border-color: rgba(26, 115, 232, 0.8);
+}
+
+/* Indicador visual no canto superior esquerdo */
+.mt-resize-nw::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 12px;
+  height: 12px;
+  border-left: 2px solid rgba(255, 255, 255, 0.3);
+  border-top: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px 0 0 0;
+  transition: border-color 0.2s ease;
+}
+
+.mt-resize-nw:hover::after {
+  border-color: rgba(26, 115, 232, 0.8);
+}
+
+/* Hover state para todos os handles */
+.mt-resize-handle:hover {
+  background: rgba(26, 115, 232, 0.1);
+}
+
+/* Durante o resize */
+#meet-translator-box.mt-resizing .mt-resize-handle {
+  background: rgba(26, 115, 232, 0.2);
+}
+
+/* ============================================
+   INDICADOR DE MODO DE CAPTURA
+   ============================================ */
+
+.mt-mode-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 8px;
+  font-size: 14px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.mt-mode-audio {
+  background: rgba(76, 175, 80, 0.3);
+}
+
+.mt-mode-captions {
+  background: rgba(26, 115, 232, 0.3);
+}
+
+/* ============================================
+   INDICADOR DE TRANSCRIÇÃO
+   ============================================ */
+
+.mt-transcribing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(76, 175, 80, 0.15);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 8px;
+  color: #81c784;
+  font-size: 13px;
+  animation: mt-pulse 1.5s infinite;
+}
+
+.mt-transcribing-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(129, 199, 132, 0.3);
+  border-top-color: #81c784;
+  border-radius: 50%;
+  animation: mt-spin 0.8s linear infinite;
+}
+
+/* Ícone de microfone animado */
+.mt-mic-animation {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 16px;
+}
+
+.mt-mic-animation span {
+  width: 3px;
+  background: #81c784;
+  border-radius: 2px;
+  animation: mt-mic-bar 0.5s ease-in-out infinite;
+}
+
+.mt-mic-animation span:nth-child(1) { animation-delay: 0s; }
+.mt-mic-animation span:nth-child(2) { animation-delay: 0.1s; }
+.mt-mic-animation span:nth-child(3) { animation-delay: 0.2s; }
+.mt-mic-animation span:nth-child(4) { animation-delay: 0.3s; }
+
+@keyframes mt-mic-bar {
+  0%, 100% { height: 4px; }
+  50% { height: 16px; }
+}
+
+/* Status de captura de áudio */
+.mt-audio-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(76, 175, 80, 0.1);
+  border-radius: 6px;
+  font-size: 11px;
+  color: #81c784;
+}
+
+.mt-audio-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: #81c784;
+  border-radius: 50%;
+  animation: mt-pulse 1.5s infinite;
+}
+
+.mt-audio-status.error {
+  background: rgba(244, 67, 54, 0.1);
+  color: #ef5350;
+}
+
+.mt-audio-status.error::before {
+  background: #ef5350;
+  animation: none;
+}
+

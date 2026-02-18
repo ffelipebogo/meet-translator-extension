@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meet Translator</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">
+          <span class="logo-icon">🌐</span>
+          <div class="logo-text">
+            <h1>Meet Translator</h1>
+            <span class="version">v1.2.0</span>
+          </div>
+        </div>
+        <div class="status-badge" id="status-badge">
+          <span class="status-dot"></span>
+          <span class="status-text">Inativo</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Alerta de não estar no Meet -->
+    <div class="alert alert-warning" id="not-in-meet-alert" style="display: none;">
+      <span class="alert-icon">⚠️</span>
+      <span>Abra uma reunião no Google Meet para usar a extensão.</span>
+    </div>
+
+    <!-- Seção de Configurações da API de Tradução -->
+    <section class="section">
+      <h2 class="section-title">
+        <span class="section-icon">🔑</span>
+        API de Tradução
+      </h2>
+      
+      <div class="form-group">
+        <label for="api-select">Serviço de Tradução</label>
+        <select id="api-select" class="form-select">
+          <option value="google">🆓 Google Translate (Gratuito)</option>
+          <option value="claude">🤖 Claude AI (Anthropic)</option>
+          <option value="openai">🧠 OpenAI GPT</option>
+        </select>
+      </div>
+
+      <div class="form-group api-key-group" id="api-key-group" style="display: none;">
+        <label for="api-key">API Key</label>
+        <div class="input-with-button">
+          <input 
+            type="password" 
+            id="api-key" 
+            class="form-input" 
+            placeholder="Cole sua API Key aqui"
+            autocomplete="off"
+          >
+          <button type="button" id="toggle-key-visibility" class="btn-icon" title="Mostrar/Ocultar">
+            👁️
+          </button>
+        </div>
+        <div class="api-status" id="api-status">
+          <span class="status-indicator" id="api-status-indicator"></span>
+          <span id="api-status-text">API não configurada</span>
+        </div>
+      </div>
+
+      <button id="save-api-btn" class="btn btn-secondary" style="display: none;">
+        💾 Salvar Configuração
+      </button>
+    </section>
+
+    <!-- Seção de Idioma -->
+    <section class="section">
+      <h2 class="section-title">
+        <span class="section-icon">🗣️</span>
+        Idioma de Destino
+      </h2>
+      
+      <div class="form-group">
+        <select id="language-select" class="form-select">
+          <option value="pt">🇧🇷 Português</option>
+          <option value="en">🇺🇸 English</option>
+          <option value="es">🇪🇸 Español</option>
+          <option value="fr">🇫🇷 Français</option>
+          <option value="de">🇩🇪 Deutsch</option>
+          <option value="it">🇮🇹 Italiano</option>
+          <option value="ja">🇯🇵 日本語</option>
+          <option value="zh">🇨🇳 中文</option>
+          <option value="ko">🇰🇷 한국어</option>
+          <option value="ru">🇷🇺 Русский</option>
+          <option value="ar">🇸🇦 العربية</option>
+          <option value="hi">🇮🇳 हिन्दी</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- Seção de Opções de Exibição -->
+    <section class="section">
+      <h2 class="section-title">
+        <span class="section-icon">👁️</span>
+        Opções de Exibição
+      </h2>
+      
+      <div class="form-group">
+        <label class="toggle-label">
+          <span class="toggle-text">Mostrar texto original</span>
+          <div class="toggle-switch">
+            <input type="checkbox" id="show-original-toggle" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </label>
+        <p class="form-hint">Exibe o texto original junto com a tradução</p>
+      </div>
+    </section>
+
+    <!-- Controles de Tradução -->
+    <section class="section controls-section">
+      <button id="start-btn" class="btn btn-primary btn-large">
+        <span class="btn-icon-left">▶️</span>
+        Iniciar Tradução
+      </button>
+      <button id="stop-btn" class="btn btn-danger btn-large" style="display: none;">
+        <span class="btn-icon-left">⏹️</span>
+        Parar Tradução
+      </button>
+    </section>
+
+    <!-- Estatísticas -->
+    <section class="section stats-section">
+      <div class="stats-grid">
+        <div class="stat-item">
+          <span class="stat-value" id="stat-translations">0</span>
+          <span class="stat-label">Traduções</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value" id="stat-cache">0</span>
+          <span class="stat-label">Em Cache</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ações Adicionais -->
+    <section class="section actions-section">
+      <div class="actions-grid">
+        <button id="export-btn" class="btn btn-outline btn-small">
+          📥 Exportar
+        </button>
+        <button id="clear-cache-btn" class="btn btn-outline btn-small">
+          🗑️ Limpar Cache
+        </button>
+      </div>
+    </section>
+
+    <!-- Instruções -->
+    <section class="section instructions-section">
+      <details class="collapsible">
+        <summary class="collapsible-header">
+          <span class="collapsible-icon">📖</span>
+          <span>Como Usar</span>
+          <span class="collapsible-arrow">▼</span>
+        </summary>
+        <div class="collapsible-content">
+          <ol class="instructions-list">
+            <li>Entre em uma reunião do Google Meet</li>
+            <li>Ative as legendas (botão CC) no Meet</li>
+            <li>Selecione a API e idioma desejado</li>
+            <li>Clique em "Iniciar Tradução"</li>
+            <li>As traduções aparecerão em tempo real!</li>
+          </ol>
+          <p class="tip">
+            <strong>💡 Dica:</strong> Use <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> para iniciar/parar rapidamente.
+          </p>
+        </div>
+      </details>
+
+      <details class="collapsible">
+        <summary class="collapsible-header">
+          <span class="collapsible-icon">🔗</span>
+          <span>Obter API Keys</span>
+          <span class="collapsible-arrow">▼</span>
+        </summary>
+        <div class="collapsible-content">
+          <p class="note" style="margin-bottom: 8px;"><strong>Tradução:</strong></p>
+          <ul class="links-list">
+            <li>
+              <a href="https://console.anthropic.com/" target="_blank" rel="noopener">
+                🤖 Claude (Anthropic)
+              </a>
+            </li>
+            <li>
+              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">
+                🧠 OpenAI GPT
+              </a>
+            </li>
+          </ul>
+          <p class="note">
+            O Google Translate é gratuito e não requer API Key.
+          </p>
+        </div>
+      </details>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>Feito com ❤️ para traduzir o mundo</p>
+    </footer>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
+
