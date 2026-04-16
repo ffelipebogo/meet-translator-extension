@@ -2,7 +2,7 @@
 
 Uma extensão para Google Chrome que captura legendas do Google Meet e traduz em tempo real usando IA.
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.4.3-blue.svg)
 ![Chrome](https://img.shields.io/badge/Chrome-Manifest%20V3-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
@@ -219,5 +219,4 @@ Se encontrar problemas ou tiver dúvidas:
 
 Feito com ❤️ para traduzir o mundo
 
-**Versão**: 1.0.0
-
+**Versão**: 1.4.3

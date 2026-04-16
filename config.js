@@ -144,11 +144,10 @@ const CONFIG = {
   },
 
   // Versão da extensão
-  VERSION: '1.2.0'
+  VERSION: '1.4.3'
 };
 
 // Exporta para uso em outros scripts (se necessário)
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = CONFIG;
 }
-

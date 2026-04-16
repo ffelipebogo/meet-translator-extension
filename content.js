@@ -11,6 +11,8 @@
   // ============================================
   
   let isActive = false;                    // Se a tradução está ativa
+  /** Incrementado ao iniciar/parar; invalida debounces e callbacks após parar */
+  let translationSessionToken = 0;
   let observer = null;                     // MutationObserver das legendas
   let translationBox = null;               // Elemento da caixa de tradução
   let currentApiType = CONFIG.APIS.GOOGLE; // API selecionada
@@ -22,6 +24,7 @@
   let translationCache = new Map();        // Cache de traduções
   let translationHistory = [];             // Histórico de traduções
   let translationCount = 0;                // Contador de traduções
+  let translationSequence = 0;             // Sequência incremental do histórico
   let isDragging = false;                  // Estado do drag
   let dragOffset = { x: 0, y: 0 };         // Offset do drag
   let isResizing = false;                  // Estado do resize
@@ -30,6 +33,8 @@
   let boxStartSize = { w: 0, h: 0 };       // Tamanho inicial ao começar resize
   let boxStartPos = { x: 0, y: 0 };        // Posição inicial ao começar resize
   let showOriginalText = true;             // Mostrar texto original (padrão: true)
+  /** @type {Map<number, number>} id do item do histórico → sequência de tradução (invalida respostas antigas) */
+  let translateSeqByEntryId = new Map();
 
   // ============================================
   // FUNÇÕES DE TRADUÇÃO
@@ -169,8 +174,9 @@
    * @returns {Promise<string>} Texto traduzido
    */
   async function translate(text) {
-    // Verifica cache primeiro
     const cacheKey = `${currentApiType}-${targetLanguage}-${text}`;
+
+    // Cache: retorna tradução imediatamente
     if (translationCache.has(cacheKey)) {
       return translationCache.get(cacheKey);
     }
@@ -203,18 +209,10 @@
 
         // Salva no cache
         if (translationCache.size >= CONFIG.CACHE_SIZE) {
-          // Remove a entrada mais antiga
           const firstKey = translationCache.keys().next().value;
           translationCache.delete(firstKey);
         }
         translationCache.set(cacheKey, translation);
-
-        // Salva no histórico
-        addToHistory(text, translation);
-        
-        // Incrementa contador
-        translationCount++;
-        updateStats();
 
         return translation;
       } catch (error) {
@@ -240,32 +238,208 @@
   // ============================================
 
   /**
-   * Adiciona tradução ao histórico
+   * Persiste o histórico no storage local.
    */
-  function addToHistory(original, translated, speaker = '') {
+  function persistHistory() {
+    try {
+      chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.HISTORY]: translationHistory });
+    } catch (err) {
+      console.warn('Meet Translator: falha ao salvar histórico no storage', err);
+    }
+  }
+
+  /**
+   * Retorna o próximo id incremental para itens do histórico.
+   */
+  function getNextHistoryId() {
+    translationSequence += 1;
+    return translationSequence;
+  }
+
+  /**
+   * Compara nomes de falantes de forma estável (evita falsos "outro falante" por espaços/caixa).
+   */
+  function normalizeSpeakerName(name) {
+    return String(name || '').trim().toLowerCase();
+  }
+
+  /**
+   * Falante não identificado (legendas sem nome ou placeholder).
+   */
+  function isUnknownSpeakerLabel(name) {
+    const n = normalizeSpeakerName(name);
+    return !n || n === 'desconhecido';
+  }
+
+  /**
+   * Legendas crescem ou corrigem no mesmo bloco (usado só quando ambos os falantes são desconhecidos).
+   */
+  function isSameCaptionTextExtension(lastEntry, newText) {
+    if (!lastEntry || !newText) return false;
+    const prev = String(lastEntry.original || '').trim();
+    const next = String(newText).trim();
+    if (!prev || !next) return false;
+    if (prev === next) return true;
+    return next.startsWith(prev) || prev.startsWith(next);
+  }
+
+  /**
+   * Histórico deve mudar só na troca de falante: reutiliza a última linha enquanto for a mesma pessoa.
+   * Prefixo só quando os dois lados são "desconhecido" (Meet sem nome em todos).
+   */
+  function shouldUpdateLastHistoryEntry(lastEntry, text, resolvedSpeaker) {
+    if (!lastEntry) return false;
+
+    const lastUn = isUnknownSpeakerLabel(lastEntry.speaker);
+    const currUn = isUnknownSpeakerLabel(resolvedSpeaker);
+    const a = normalizeSpeakerName(lastEntry.speaker);
+    const b = normalizeSpeakerName(resolvedSpeaker);
+
+    if (!lastUn && !currUn) {
+      return a === b;
+    }
+    if (!lastUn && currUn) {
+      return true;
+    }
+    if (lastUn && !currUn) {
+      return true;
+    }
+    return isSameCaptionTextExtension(lastEntry, text);
+  }
+
+  /**
+   * Incrementa a sequência de tradução do item; respostas com sequência antiga são ignoradas.
+   */
+  function translateSeqIncrement(entryId) {
+    const next = (translateSeqByEntryId.get(entryId) || 0) + 1;
+    translateSeqByEntryId.set(entryId, next);
+    return next;
+  }
+
+  /**
+   * Reutiliza a última mensagem enquanto o falante for o mesmo; nova entrada só na troca de falante.
+   */
+  function getOrCreateHistoryEntryForCaption(text, speaker = '') {
+    const resolvedSpeaker = (speaker || lastSpeakerName || 'Desconhecido').trim() || 'Desconhecido';
+    const last = translationHistory.length ? translationHistory[translationHistory.length - 1] : null;
+
+    if (last && shouldUpdateLastHistoryEntry(last, text, resolvedSpeaker)) {
+      updateHistoryEntryById(last.id, {
+        original: text,
+        speaker: resolvedSpeaker,
+        status: 'translating',
+        translated: ''
+      });
+      return last;
+    }
+
+    return createPendingHistoryEntry(text, speaker);
+  }
+
+  /**
+   * Cria um item pendente no histórico e mantém ordem de captura (append).
+   */
+  function createPendingHistoryEntry(original, speaker = '') {
     const entry = {
+      id: getNextHistoryId(),
       timestamp: new Date().toISOString(),
       speaker: speaker || lastSpeakerName || 'Desconhecido',
       original: original,
-      translated: translated,
+      translated: '',
+      status: 'translating',
       api: currentApiType,
       targetLang: targetLanguage
     };
-    
-    translationHistory.unshift(entry);
-    
-    // Limita tamanho do histórico
-    if (translationHistory.length > CONFIG.HISTORY_SIZE) {
-      translationHistory = translationHistory.slice(0, CONFIG.HISTORY_SIZE);
-    }
-    
-    // Salva no storage
-    chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.HISTORY]: translationHistory });
 
-    // Atualiza a lista de mensagens na UI
-    if (translationBox) {
-      renderHistoryList();
+    translationHistory.push(entry);
+
+    let removedEntry = null;
+    if (translationHistory.length > CONFIG.HISTORY_SIZE) {
+      removedEntry = translationHistory.shift();
+      if (removedEntry && removedEntry.id != null) {
+        translateSeqByEntryId.delete(removedEntry.id);
+      }
     }
+
+    persistHistory();
+
+    if (translationBox) {
+      try {
+        if (removedEntry) {
+          removeHistoryItemById(removedEntry.id);
+        }
+        appendHistoryItem(entry);
+      } catch (err) {
+        console.warn('Meet Translator: falha ao atualizar lista de histórico', err);
+        renderHistoryList();
+      }
+    }
+
+    return entry;
+  }
+
+  /**
+   * Atualiza um item existente do histórico sem alterar sua posição.
+   */
+  function updateHistoryEntryById(id, updates = {}) {
+    const entry = translationHistory.find(item => item.id === id);
+    if (!entry) return null;
+
+    Object.assign(entry, updates);
+    persistHistory();
+
+    if (translationBox) {
+      try {
+        updateHistoryItem(entry);
+      } catch (err) {
+        console.warn('Meet Translator: falha ao atualizar item do histórico', err);
+        renderHistoryList();
+      }
+    }
+
+    return entry;
+  }
+
+  /**
+   * Normaliza histórico carregado do storage e garante ids únicos/ordem estável.
+   */
+  function normalizeHistoryEntries(rawHistory) {
+    if (!Array.isArray(rawHistory) || rawHistory.length === 0) {
+      return [];
+    }
+
+    // Dados antigos não tinham id e eram salvos com newest-first (unshift).
+    const hasAnyId = rawHistory.some(entry => Number.isFinite(Number(entry && entry.id)));
+    const source = hasAnyId ? rawHistory : rawHistory.slice().reverse();
+
+    let maxAssignedId = 0;
+
+    const normalized = source
+      .filter(entry => entry && typeof entry === 'object')
+      .map((entry) => {
+        let id = Number(entry.id);
+        if (!Number.isFinite(id) || id <= 0) {
+          id = maxAssignedId + 1;
+        }
+        maxAssignedId = Math.max(maxAssignedId, id);
+
+        return {
+          id: id,
+          timestamp: entry.timestamp || new Date().toISOString(),
+          speaker: entry.speaker || 'Desconhecido',
+          original: entry.original || '',
+          translated: entry.translated || '',
+          status: entry.status || (entry.translated ? 'done' : 'translating'),
+          api: entry.api || currentApiType,
+          targetLang: entry.targetLang || targetLanguage
+        };
+      });
+
+    if (normalized.length > CONFIG.HISTORY_SIZE) {
+      return normalized.slice(normalized.length - CONFIG.HISTORY_SIZE);
+    }
+
+    return normalized;
   }
 
   /**
@@ -783,6 +957,124 @@
   /**
    * Renderiza a lista de mensagens anteriores na caixa
    */
+  function formatHistoryTime(timestamp) {
+    if (!timestamp) return '';
+    return new Date(timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /**
+   * Retorna o texto exibido na área traduzida com base no status.
+   */
+  function getHistoryTranslatedText(entry) {
+    if (!entry) return '';
+    if (entry.status === 'translating') {
+      return entry.translated || 'Traduzindo...';
+    }
+    if (entry.status === 'error') {
+      return entry.translated || 'Erro na tradução';
+    }
+    return entry.translated || '';
+  }
+
+  /**
+   * Atualiza o conteúdo visual de um item do histórico.
+   */
+  function updateHistoryItemElement(item, entry) {
+    const timeStr = formatHistoryTime(entry.timestamp);
+    const translatedText = getHistoryTranslatedText(entry);
+
+    item.dataset.historyId = String(entry.id);
+    item.dataset.status = entry.status || 'done';
+    item.className = 'mt-history-item';
+
+    if (entry.status === 'translating') {
+      item.classList.add('mt-history-item-pending');
+    } else if (entry.status === 'error') {
+      item.classList.add('mt-history-item-error');
+    }
+
+    item.innerHTML = `
+      <div class="mt-history-item-header">
+        <span class="mt-history-speaker">${escapeHtml(entry.speaker || 'Desconhecido')}</span>
+        ${timeStr ? `<span class="mt-history-time">${timeStr}</span>` : ''}
+      </div>
+      ${showOriginalText ? `<div class="mt-history-original">${escapeHtml(entry.original || '')}</div>` : ''}
+      <div class="mt-history-translated">${escapeHtml(translatedText)}</div>
+    `;
+  }
+
+  /**
+   * Cria o elemento DOM de um item do histórico.
+   */
+  function buildHistoryItemElement(entry) {
+    const item = document.createElement('div');
+    updateHistoryItemElement(item, entry);
+    return item;
+  }
+
+  /**
+   * Garante estado vazio quando não há itens no histórico.
+   */
+  function ensureHistoryEmptyState(listEl) {
+    if (!listEl) return;
+
+    if (translationHistory.length === 0) {
+      if (!listEl.querySelector('.mt-history-empty')) {
+        const empty = document.createElement('div');
+        empty.className = 'mt-history-empty';
+        empty.textContent = 'Nenhuma mensagem anterior ainda.';
+        listEl.appendChild(empty);
+      }
+      return;
+    }
+
+    const empty = listEl.querySelector('.mt-history-empty');
+    if (empty) empty.remove();
+  }
+
+  /**
+   * Remove um item do DOM do histórico.
+   */
+  function removeHistoryItemById(id) {
+    const listEl = document.getElementById('mt-history-list');
+    if (!listEl) return;
+
+    const item = listEl.querySelector(`[data-history-id="${id}"]`);
+    if (item) {
+      item.remove();
+    }
+
+    ensureHistoryEmptyState(listEl);
+  }
+
+  /**
+   * Adiciona item ao final da lista para manter ordem de captura.
+   */
+  function appendHistoryItem(entry) {
+    const listEl = document.getElementById('mt-history-list');
+    if (!listEl) return;
+
+    ensureHistoryEmptyState(listEl);
+    listEl.appendChild(buildHistoryItemElement(entry));
+    listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  /**
+   * Atualiza um item do histórico no DOM sem recriar a lista inteira.
+   */
+  function updateHistoryItem(entry) {
+    const listEl = document.getElementById('mt-history-list');
+    if (!listEl) return;
+
+    const item = listEl.querySelector(`[data-history-id="${entry.id}"]`);
+    if (!item) return;
+
+    updateHistoryItemElement(item, entry);
+  }
+
+  /**
+   * Renderização completa (usada no carregamento inicial e ajustes de UI).
+   */
   function renderHistoryList() {
     const listEl = document.getElementById('mt-history-list');
     if (!listEl) return;
@@ -790,26 +1082,12 @@
     listEl.innerHTML = '';
 
     if (!translationHistory || translationHistory.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'mt-history-empty';
-      empty.textContent = 'Nenhuma mensagem anterior ainda.';
-      listEl.appendChild(empty);
+      ensureHistoryEmptyState(listEl);
       return;
     }
 
-    translationHistory.forEach((entry, index) => {
-      const item = document.createElement('div');
-      item.className = 'mt-history-item';
-      const timeStr = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-      item.innerHTML = `
-        <div class="mt-history-item-header">
-          <span class="mt-history-speaker">${escapeHtml(entry.speaker || 'Desconhecido')}</span>
-          ${timeStr ? `<span class="mt-history-time">${timeStr}</span>` : ''}
-        </div>
-        ${showOriginalText ? `<div class="mt-history-original">${escapeHtml(entry.original || '')}</div>` : ''}
-        <div class="mt-history-translated">${escapeHtml(entry.translated || '')}</div>
-      `;
-      listEl.appendChild(item);
+    translationHistory.forEach((entry) => {
+      listEl.appendChild(buildHistoryItemElement(entry));
     });
   }
 
@@ -971,18 +1249,49 @@
       clearTimeout(debounceTimer);
     }
 
+    const sessionAtSchedule = translationSessionToken;
+
     // Aplica debounce
     debounceTimer = setTimeout(async () => {
+      if (!isActive || sessionAtSchedule !== translationSessionToken) {
+        return;
+      }
+
+      const historyEntry = getOrCreateHistoryEntryForCaption(text, speaker);
+      const seq = translateSeqIncrement(historyEntry.id);
+
       try {
         setLoading(true);
         const translation = await translate(text);
+
+        if (!isActive || sessionAtSchedule !== translationSessionToken) {
+          return;
+        }
+
+        if (translateSeqByEntryId.get(historyEntry.id) !== seq) {
+          return;
+        }
+
         updateTranslatedText(translation);
+
+        updateHistoryEntryById(historyEntry.id, {
+          translated: translation,
+          status: 'done'
+        });
+
+        translationCount++;
+        updateStats();
         updateStatsDisplay();
-        
-        // Salva no histórico com o nome do falante
-        // (já feito dentro da função translate)
       } catch (error) {
         console.error('Erro na tradução:', error);
+
+        if (!isActive || sessionAtSchedule !== translationSessionToken) {
+          return;
+        }
+
+        if (translateSeqByEntryId.get(historyEntry.id) !== seq) {
+          return;
+        }
         
         // Mapeia erros para mensagens amigáveis
         let errorMessage = CONFIG.ERROR_MESSAGES.UNKNOWN_ERROR;
@@ -996,10 +1305,20 @@
           errorMessage = CONFIG.ERROR_MESSAGES.NETWORK_ERROR;
         }
         
+        const failedTranslation = 'Erro na tradução';
         showError(errorMessage);
-        updateTranslatedText('Erro na tradução');
+        updateTranslatedText(failedTranslation);
+
+        updateHistoryEntryById(historyEntry.id, {
+          translated: failedTranslation,
+          status: 'error'
+        });
       } finally {
-        setLoading(false);
+        if (!isActive || sessionAtSchedule !== translationSessionToken) {
+          setLoading(false);
+        } else if (translateSeqByEntryId.get(historyEntry.id) === seq) {
+          setLoading(false);
+        }
       }
     }, CONFIG.DEBOUNCE_DELAY);
   }
@@ -1123,6 +1442,7 @@
     if (isActive) return;
     
     isActive = true;
+    translationSessionToken += 1;
     showTranslationBox();
     startCaptionObserver();
     showToast('Tradução iniciada! 🌐');
@@ -1140,26 +1460,39 @@
   }
 
   /**
-   * Para a tradução
+   * Para a tradução e encerra observação, timers e trabalho assíncrono pendente.
+   * Idempotente: pode ser chamado várias vezes para garantir limpeza completa.
    */
   function stopTranslation() {
-    if (!isActive) return;
-    
+    const wasActive = isActive;
+
     isActive = false;
+    translationSessionToken += 1;
+
     stopCaptionObserver();
-    
-    // Atualiza badge de status
+    lastCaptionText = '';
+
+    hideTranslationBox();
+
+    // Atualiza badge de status (caixa pode existir oculta)
     const badge = document.getElementById('mt-status-badge');
     if (badge) {
       badge.textContent = 'Inativo';
       badge.classList.remove('mt-badge-active');
       badge.classList.add('mt-badge-inactive');
     }
-    
-    showToast('Tradução pausada');
-    
-    // Notifica background
-    chrome.runtime.sendMessage({ type: 'statusUpdate', isActive: false });
+
+    setLoading(false);
+
+    if (wasActive) {
+      showToast('Tradução encerrada');
+    }
+
+    try {
+      chrome.runtime.sendMessage({ type: 'statusUpdate', isActive: false });
+    } catch (err) {
+      console.warn('Meet Translator: falha ao notificar status ao parar', err);
+    }
   }
 
   /**
@@ -1312,7 +1645,8 @@
       currentApiType = result[CONFIG.STORAGE_KEYS.API_TYPE] || CONFIG.APIS.GOOGLE;
       currentApiKey = result[CONFIG.STORAGE_KEYS.API_KEY] || '';
       targetLanguage = result[CONFIG.STORAGE_KEYS.TARGET_LANGUAGE] || 'pt';
-      translationHistory = result[CONFIG.STORAGE_KEYS.HISTORY] || [];
+      translationHistory = normalizeHistoryEntries(result[CONFIG.STORAGE_KEYS.HISTORY]);
+      translationSequence = translationHistory.reduce((maxId, entry) => Math.max(maxId, Number(entry.id) || 0), 0);
       showOriginalText = result[CONFIG.STORAGE_KEYS.SHOW_ORIGINAL] !== false;
       
       const stats = result[CONFIG.STORAGE_KEYS.STATS];
@@ -1351,4 +1685,3 @@
     init();
   }
 })();
-

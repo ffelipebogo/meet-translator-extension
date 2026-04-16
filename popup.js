@@ -71,7 +71,30 @@
   }
 
   /**
-   * Envia mensagem para o content script
+   * Injeta os content scripts na aba atual (útil quando a aba foi aberta antes da extensão).
+   */
+  async function injectContentScripts() {
+    if (!currentTab?.id || !checkIfMeet(currentTab)) return false;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: currentTab.id },
+        files: ['config.js', 'content.js']
+      });
+      await chrome.scripting.insertCSS({
+        target: { tabId: currentTab.id },
+        files: ['styles.css']
+      });
+      return true;
+    } catch (err) {
+      console.warn('Meet Translator: falha ao injetar content scripts', err);
+      return false;
+    }
+  }
+
+  /**
+   * Envia mensagem para o content script.
+   * Se o content script não existir (ex.: aba aberta antes de recarregar a extensão),
+   * tenta injetar os scripts e reenviar.
    */
   async function sendMessage(message) {
     if (!currentTab?.id) return null;
@@ -80,6 +103,22 @@
       const response = await chrome.tabs.sendMessage(currentTab.id, message);
       return response;
     } catch (error) {
+      const isNoReceiver = error?.message?.includes('Receiving end does not exist') ||
+        error?.message?.includes('Could not establish connection');
+      
+      if (isNoReceiver && checkIfMeet(currentTab)) {
+        const injected = await injectContentScripts();
+        if (injected) {
+          await new Promise(r => setTimeout(r, 300));
+          try {
+            return await chrome.tabs.sendMessage(currentTab.id, message);
+          } catch (retryError) {
+            console.error('Erro ao enviar mensagem após injeção:', retryError);
+            return null;
+          }
+        }
+      }
+      
       console.error('Erro ao enviar mensagem:', error);
       return null;
     }
@@ -319,6 +358,8 @@
       await saveToStorage(CONFIG.STORAGE_KEYS.IS_ACTIVE, true);
     } else if (response?.error) {
       alert('Erro ao iniciar: ' + response.error);
+    } else if (response === null) {
+      alert('Não foi possível conectar à página do Meet. Recarregue a aba do Meet (F5) e tente novamente.');
     }
   }
 
@@ -327,11 +368,17 @@
    */
   async function handleStopTranslation() {
     const response = await sendMessage({ type: 'stopTranslation' });
-    
-    if (response?.success) {
-      updateStatusBadge(false);
-      updateControlButtons(false);
-      await saveToStorage(CONFIG.STORAGE_KEYS.IS_ACTIVE, false);
+
+    updateStatusBadge(false);
+    updateControlButtons(false);
+    await saveToStorage(CONFIG.STORAGE_KEYS.IS_ACTIVE, false);
+
+    if (!response?.success) {
+      try {
+        await chrome.runtime.sendMessage({ type: 'statusUpdate', isActive: false });
+      } catch (_) {
+        /* ignore */
+      }
     }
   }
 

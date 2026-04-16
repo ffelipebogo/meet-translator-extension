@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Google Meet Live Translator",
-  "version": "1.2.0",
+  "version": "1.4.3",
   "description": "Traduz legendas do Google Meet em tempo real usando IA",
   "author": "Meet Translator Team",
   "icons": {
@@ -51,4 +51,3 @@
     }
   }
 }
-
