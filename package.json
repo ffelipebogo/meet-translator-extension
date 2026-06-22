@@ -1,0 +1,13 @@
+{
+  "name": "meet-translator-extension",
+  "version": "1.4.3",
+  "description": "Google Meet Live Translator Extension",
+  "scripts": {
+    "test": "node --test",
+    "test:pbt": "node tests/bug-condition-exploration.test.js"
+  },
+  "devDependencies": {
+    "fast-check": "^3.15.0"
+  },
+  "type": "module"
+}
