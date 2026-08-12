@@ -96,11 +96,11 @@ const CONFIG = {
   ],
 
   // Configurações de performance
-  DEBOUNCE_DELAY: 500,              // Delay em ms antes de traduzir
+  CAPTION_STABILITY_DELAY: 1000,    // Tempo sem mudança de texto até finalizar a Fala ao vivo
   MAX_RETRIES: 3,                   // Tentativas máximas em caso de erro
   RETRY_DELAY: 1000,                // Delay entre tentativas em ms
   CACHE_SIZE: 100,                  // Número máximo de traduções em cache
-  HISTORY_SIZE: 50,                 // Número máximo de traduções no histórico
+  HISTORY_SIZE: 25,                 // Número máximo de entradas no Histórico exibido (a exportação usa o Registro completo, sem limite)
 
   // Configurações da interface
   UI: {

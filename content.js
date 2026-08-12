@@ -11,18 +11,21 @@
   // ============================================
   
   let isActive = false;                    // Se a tradução está ativa
-  /** Incrementado ao iniciar/parar; invalida debounces e callbacks após parar */
+  /** Incrementado ao iniciar/parar; invalida timers e callbacks após parar */
   let translationSessionToken = 0;
   let observer = null;                     // MutationObserver das legendas
   let translationBox = null;               // Elemento da caixa de tradução
   let currentApiType = CONFIG.APIS.GOOGLE; // API selecionada
   let currentApiKey = '';                  // Chave da API
   let targetLanguage = 'pt';               // Idioma alvo
-  let lastCaptionText = '';                // Último texto capturado
-  let lastSpeakerName = '';                // Último falante identificado
-  let debounceTimer = null;                // Timer do debounce
+  /** Fala em andamento, ainda não finalizada: { speaker, original } | null */
+  let liveUtterance = null;
+  /** Agenda a finalização por estabilidade (~1s sem mudança); trocada por troca de falante */
+  let stabilityTimer = null;
   let translationCache = new Map();        // Cache de traduções
-  let translationHistory = [];             // Histórico de traduções
+  let translationHistory = [];             // Histórico exibido (cap CONFIG.HISTORY_SIZE), escopo da Sessão
+  /** Registro completo da Sessão, sem cap e sem truncar texto — usado só pela exportação (ADR 0002) */
+  let fullTranscriptLog = [];
   let translationCount = 0;                // Contador de traduções
   let translationSequence = 0;             // Sequência incremental do histórico
   let isDragging = false;                  // Estado do drag
@@ -33,8 +36,7 @@
   let boxStartSize = { w: 0, h: 0 };       // Tamanho inicial ao começar resize
   let boxStartPos = { x: 0, y: 0 };        // Posição inicial ao começar resize
   let showOriginalText = true;             // Mostrar texto original (padrão: true)
-  /** @type {Map<number, number>} id do item do histórico → sequência de tradução (invalida respostas antigas) */
-  let translateSeqByEntryId = new Map();
+  let isUserAtBottomOfHistory = true;      // Rolagem inteligente: só auto-scroll quando já está no final
 
   // ============================================
   // FUNÇÕES DE TRADUÇÃO
@@ -238,17 +240,6 @@
   // ============================================
 
   /**
-   * Persiste o histórico no storage local.
-   */
-  function persistHistory() {
-    try {
-      chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.HISTORY]: translationHistory });
-    } catch (err) {
-      console.warn('Meet Translator: falha ao salvar histórico no storage', err);
-    }
-  }
-
-  /**
    * Retorna o próximo id incremental para itens do histórico.
    */
   function getNextHistoryId() {
@@ -272,6 +263,15 @@
   }
 
   /**
+   * Verifica se um contêiner de rolagem já está (perto d)o final — usado para decidir se o
+   * histórico deve auto-rolar ou mostrar o botão "nova mensagem" (Q7/Q13).
+   */
+  function isScrolledToBottom(scrollTop, scrollHeight, clientHeight, threshold = 50) {
+    if (scrollHeight <= clientHeight) return true;
+    return scrollHeight - scrollTop - clientHeight <= threshold;
+  }
+
+  /**
    * Legendas crescem ou corrigem no mesmo bloco (usado só quando ambos os falantes são desconhecidos).
    */
   function isSameCaptionTextExtension(lastEntry, newText) {
@@ -284,89 +284,89 @@
   }
 
   /**
-   * Histórico deve mudar só na troca de falante: reutiliza a última linha enquanto for a mesma pessoa.
-   * Prefixo só quando os dois lados são "desconhecido" (Meet sem nome em todos).
+   * Reduz uma legenda crua a um rótulo de falante nunca vazio ("Desconhecido" se não identificado).
+   * Nunca herda o último falante conhecido — é exatamente essa herança que misturava falas de
+   * pessoas diferentes na heurística anterior (ver ADR 0001).
    */
-  function shouldUpdateLastHistoryEntry(lastEntry, text, resolvedSpeaker) {
-    if (!lastEntry) return false;
-
-    const lastUn = isUnknownSpeakerLabel(lastEntry.speaker);
-    const currUn = isUnknownSpeakerLabel(resolvedSpeaker);
-    const a = normalizeSpeakerName(lastEntry.speaker);
-    const b = normalizeSpeakerName(resolvedSpeaker);
-
-    if (!lastUn && !currUn) {
-      return a === b;
-    }
-    if (!lastUn && currUn) {
-      return true;
-    }
-    if (lastUn && !currUn) {
-      return true;
-    }
-    return isSameCaptionTextExtension(lastEntry, text);
+  function resolveIncomingSpeakerLabel(rawSpeaker) {
+    const trimmed = String(rawSpeaker || '').trim();
+    return trimmed || 'Desconhecido';
   }
 
   /**
-   * Incrementa a sequência de tradução do item; respostas com sequência antiga são ignoradas.
+   * Decide se uma legenda recebida ainda é a mesma Fala em andamento (Rascunho ao vivo) ou se
+   * encerra a anterior e começa uma nova. Ver ADR 0001.
+   *
+   * - Mesmo falante nomeado nos dois lados → continuação.
+   * - Falante nomeado diferente nos dois lados → nova Fala (troca de falante).
+   * - Qualquer lado "não identificado" (nos dois sentidos, incluindo nome chegando atrasado) →
+   *   só continua se o texto for claramente uma extensão do que já estava ao vivo; do contrário,
+   *   tratamos como possível novo falante em vez de arriscar herdar a fala errada. Uma extensão
+   *   real de texto (nome só chegou atrasado para a MESMA fala) sempre satisfaz esse critério —
+   *   por isso não precisa de um caso especial só para essa direção.
    */
-  function translateSeqIncrement(entryId) {
-    const next = (translateSeqByEntryId.get(entryId) || 0) + 1;
-    translateSeqByEntryId.set(entryId, next);
-    return next;
+  function isContinuationOfLiveUtterance(live, incomingText, incomingSpeaker) {
+    if (!live) return false;
+
+    const liveUnknown = isUnknownSpeakerLabel(live.speaker);
+    const incomingUnknown = isUnknownSpeakerLabel(incomingSpeaker);
+
+    if (!liveUnknown && !incomingUnknown) {
+      return normalizeSpeakerName(live.speaker) === normalizeSpeakerName(incomingSpeaker);
+    }
+    return isSameCaptionTextExtension(live, incomingText);
   }
 
   /**
-   * Reutiliza a última mensagem enquanto o falante for o mesmo; nova entrada só na troca de falante.
+   * Finaliza a Fala ao vivo atual: vira uma Entrada finalizada imutável (histórico + registro
+   * completo) e dispara a tradução. Depois de finalizada, original/falante nunca mais mudam.
    */
-  function getOrCreateHistoryEntryForCaption(text, speaker = '') {
-    const resolvedSpeaker = (speaker || lastSpeakerName || 'Desconhecido').trim() || 'Desconhecido';
-    const last = translationHistory.length ? translationHistory[translationHistory.length - 1] : null;
+  function finalizeLiveUtterance() {
+    if (!liveUtterance) return null;
 
-    if (last && shouldUpdateLastHistoryEntry(last, text, resolvedSpeaker)) {
-      updateHistoryEntryById(last.id, {
-        original: text,
-        speaker: resolvedSpeaker,
-        status: 'translating',
-        translated: ''
-      });
-      return last;
+    if (stabilityTimer) {
+      clearTimeout(stabilityTimer);
+      stabilityTimer = null;
     }
 
-    return createPendingHistoryEntry(text, speaker);
-  }
-
-  /**
-   * Cria um item pendente no histórico e mantém ordem de captura (append).
-   */
-  function createPendingHistoryEntry(original, speaker = '') {
     const entry = {
       id: getNextHistoryId(),
       timestamp: new Date().toISOString(),
-      speaker: speaker || lastSpeakerName || 'Desconhecido',
-      original: original,
+      speaker: liveUtterance.speaker,
+      original: liveUtterance.original,
       translated: '',
       status: 'translating',
       api: currentApiType,
       targetLang: targetLanguage
     };
 
+    liveUtterance = null;
+    updateLiveSection(null);
+
+    appendFinalizedEntry(entry);
+    translateFinalizedEntry(entry);
+
+    return entry;
+  }
+
+  /**
+   * Adiciona uma Entrada finalizada ao Histórico exibido (com cap) e ao Registro completo (sem
+   * cap, sem truncar) — ver ADR 0002. É o mesmo objeto nas duas listas, então atualizações
+   * posteriores (ex.: tradução chegando) refletem em ambas automaticamente.
+   */
+  function appendFinalizedEntry(entry) {
+    fullTranscriptLog.push(entry);
+
     translationHistory.push(entry);
-
-    let removedEntry = null;
+    let removedFromView = null;
     if (translationHistory.length > CONFIG.HISTORY_SIZE) {
-      removedEntry = translationHistory.shift();
-      if (removedEntry && removedEntry.id != null) {
-        translateSeqByEntryId.delete(removedEntry.id);
-      }
+      removedFromView = translationHistory.shift();
     }
-
-    persistHistory();
 
     if (translationBox) {
       try {
-        if (removedEntry) {
-          removeHistoryItemById(removedEntry.id);
+        if (removedFromView) {
+          removeHistoryItemById(removedFromView.id);
         }
         appendHistoryItem(entry);
       } catch (err) {
@@ -374,19 +374,16 @@
         renderHistoryList();
       }
     }
-
-    return entry;
   }
 
   /**
-   * Atualiza um item existente do histórico sem alterar sua posição.
+   * Atualiza campos de uma Entrada já finalizada (só tradução/status — nunca original/falante).
    */
-  function updateHistoryEntryById(id, updates = {}) {
-    const entry = translationHistory.find(item => item.id === id);
+  function updateFinalizedEntryTranslation(id, updates = {}) {
+    const entry = fullTranscriptLog.find(item => item.id === id);
     if (!entry) return null;
 
     Object.assign(entry, updates);
-    persistHistory();
 
     if (translationBox) {
       try {
@@ -401,45 +398,46 @@
   }
 
   /**
-   * Normaliza histórico carregado do storage e garante ids únicos/ordem estável.
+   * Traduz uma Entrada finalizada (uma única vez, disparada só na finalização) e atualiza seus
+   * campos de tradução/status quando a resposta chegar.
    */
-  function normalizeHistoryEntries(rawHistory) {
-    if (!Array.isArray(rawHistory) || rawHistory.length === 0) {
-      return [];
+  async function translateFinalizedEntry(entry) {
+    const sessionAtSchedule = translationSessionToken;
+
+    try {
+      setLoading(true);
+      const translation = await translate(entry.original);
+
+      if (sessionAtSchedule !== translationSessionToken) return;
+
+      updateFinalizedEntryTranslation(entry.id, { translated: translation, status: 'done' });
+
+      translationCount++;
+      updateStats();
+      updateStatsDisplay();
+    } catch (error) {
+      console.error('Erro na tradução:', error);
+
+      if (sessionAtSchedule !== translationSessionToken) return;
+
+      let errorMessage = CONFIG.ERROR_MESSAGES.UNKNOWN_ERROR;
+      if (error.message === 'NO_API_KEY') {
+        errorMessage = CONFIG.ERROR_MESSAGES.NO_API_KEY;
+      } else if (error.message === 'INVALID_API_KEY') {
+        errorMessage = CONFIG.ERROR_MESSAGES.INVALID_API_KEY;
+      } else if (error.message === 'RATE_LIMIT') {
+        errorMessage = CONFIG.ERROR_MESSAGES.RATE_LIMIT;
+      } else if (error.message.includes('network') || error.message.includes('fetch')) {
+        errorMessage = CONFIG.ERROR_MESSAGES.NETWORK_ERROR;
+      }
+
+      showError(errorMessage);
+      updateFinalizedEntryTranslation(entry.id, { translated: 'Erro na tradução', status: 'error' });
+    } finally {
+      if (sessionAtSchedule === translationSessionToken) {
+        setLoading(false);
+      }
     }
-
-    // Dados antigos não tinham id e eram salvos com newest-first (unshift).
-    const hasAnyId = rawHistory.some(entry => Number.isFinite(Number(entry && entry.id)));
-    const source = hasAnyId ? rawHistory : rawHistory.slice().reverse();
-
-    let maxAssignedId = 0;
-
-    const normalized = source
-      .filter(entry => entry && typeof entry === 'object')
-      .map((entry) => {
-        let id = Number(entry.id);
-        if (!Number.isFinite(id) || id <= 0) {
-          id = maxAssignedId + 1;
-        }
-        maxAssignedId = Math.max(maxAssignedId, id);
-
-        return {
-          id: id,
-          timestamp: entry.timestamp || new Date().toISOString(),
-          speaker: entry.speaker || 'Desconhecido',
-          original: entry.original || '',
-          translated: entry.translated || '',
-          status: entry.status || (entry.translated ? 'done' : 'translating'),
-          api: entry.api || currentApiType,
-          targetLang: entry.targetLang || targetLanguage
-        };
-      });
-
-    if (normalized.length > CONFIG.HISTORY_SIZE) {
-      return normalized.slice(normalized.length - CONFIG.HISTORY_SIZE);
-    }
-
-    return normalized;
   }
 
   /**
@@ -458,8 +456,10 @@
    * Exporta histórico como JSON ou TXT
    */
   function exportHistory(format = 'json') {
+    // Exporta o Registro completo da Sessão (ADR 0002), não o Histórico exibido —
+    // a exportação nunca deve perder falas por causa do limite de exibição da caixinha.
     if (format === 'json') {
-      const blob = new Blob([JSON.stringify(translationHistory, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(fullTranscriptLog, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -467,7 +467,7 @@
       a.click();
       URL.revokeObjectURL(url);
     } else if (format === 'txt') {
-      const text = translationHistory.map(entry => 
+      const text = fullTranscriptLog.map(entry =>
         `[${entry.timestamp}]\n👤 ${entry.speaker || 'Desconhecido'}\nOriginal: ${entry.original}\nTradução: ${entry.translated}\n---`
       ).join('\n\n');
       const blob = new Blob([text], { type: 'text/plain' });
@@ -527,7 +527,10 @@
             <span>Mensagens anteriores</span>
             <button class="mt-btn-icon mt-history-toggle" id="mt-history-toggle" title="Expandir/recolher histórico">▼</button>
           </div>
-          <div class="mt-history-list" id="mt-history-list"></div>
+          <div class="mt-history-list-wrapper">
+            <div class="mt-history-list" id="mt-history-list"></div>
+            <button class="mt-jump-to-latest" id="mt-jump-to-latest" style="display: none;">↓ Nova mensagem</button>
+          </div>
         </div>
       </div>
       <div class="mt-footer">
@@ -815,6 +818,31 @@
         }
       });
     }
+
+    setupSmartScroll();
+  }
+
+  /**
+   * Rolagem inteligente do histórico: só auto-rola quando o usuário já está no final da lista;
+   * senão mostra um botão para pular para as mensagens novas (decisões Q7/Q13).
+   */
+  function setupSmartScroll() {
+    const listEl = document.getElementById('mt-history-list');
+    const jumpBtn = document.getElementById('mt-jump-to-latest');
+    if (!listEl || !jumpBtn) return;
+
+    listEl.addEventListener('scroll', () => {
+      isUserAtBottomOfHistory = isScrolledToBottom(listEl.scrollTop, listEl.scrollHeight, listEl.clientHeight);
+      if (isUserAtBottomOfHistory) {
+        jumpBtn.style.display = 'none';
+      }
+    });
+
+    jumpBtn.addEventListener('click', () => {
+      listEl.scrollTop = listEl.scrollHeight;
+      isUserAtBottomOfHistory = true;
+      jumpBtn.style.display = 'none';
+    });
   }
 
   /**
@@ -875,24 +903,46 @@
   }
 
   /**
-   * Atualiza o nome do falante na caixa
+   * Atualiza o nome do falante na caixa. `animate` liga o destaque visual — só deve ser
+   * true quando o falante realmente mudou, não a cada atualização de texto da mesma Fala.
    */
-  function updateSpeakerName(name) {
+  function updateSpeakerDisplay(name, animate) {
     const element = document.getElementById('mt-speaker-name');
     const section = document.getElementById('mt-speaker-section');
-    
-    if (element && name) {
-      element.textContent = name;
-      lastSpeakerName = name;
-      
-      // Adiciona animação de destaque quando muda o falante
-      if (section) {
-        section.classList.add('mt-speaker-highlight');
-        setTimeout(() => {
-          section.classList.remove('mt-speaker-highlight');
-        }, 500);
-      }
+
+    if (!element || !name) return;
+
+    element.textContent = name;
+
+    if (animate && section) {
+      section.classList.add('mt-speaker-highlight');
+      setTimeout(() => {
+        section.classList.remove('mt-speaker-highlight');
+      }, 500);
     }
+  }
+
+  /**
+   * Reflete o Rascunho ao vivo (ou o esvazia quando não há Fala em andamento) na caixinha,
+   * com um estilo visual diferente do histórico já finalizado (ver ADR 0001 / decisão Q11).
+   */
+  function updateLiveSection(live) {
+    const speakerSection = document.getElementById('mt-speaker-section');
+    const originalSection = translationBox?.querySelector('.mt-original');
+    const translatedSection = translationBox?.querySelector('.mt-translated');
+
+    const sections = [speakerSection, originalSection, translatedSection];
+
+    if (!live) {
+      updateOriginalText('');
+      updateTranslatedText('');
+      sections.forEach(el => el?.classList.remove('mt-live-pending'));
+      return;
+    }
+
+    updateOriginalText(live.original);
+    updateTranslatedText('Traduzindo assim que esta fala terminar...');
+    sections.forEach(el => el?.classList.add('mt-live-pending'));
   }
 
   /**
@@ -1056,7 +1106,13 @@
 
     ensureHistoryEmptyState(listEl);
     listEl.appendChild(buildHistoryItemElement(entry));
-    listEl.scrollTop = listEl.scrollHeight;
+
+    if (isUserAtBottomOfHistory) {
+      listEl.scrollTop = listEl.scrollHeight;
+    } else {
+      const jumpBtn = document.getElementById('mt-jump-to-latest');
+      if (jumpBtn) jumpBtn.style.display = 'flex';
+    }
   }
 
   /**
@@ -1233,94 +1289,53 @@
   /**
    * Processa mudança nas legendas
    */
-  async function handleCaptionChange(text, speaker = '') {
-    if (!text || text === lastCaptionText) return;
-    
-    lastCaptionText = text;
-    updateOriginalText(text);
-    
-    // Atualiza o nome do falante se encontrado
-    if (speaker) {
-      updateSpeakerName(speaker);
+  function handleCaptionChange(text, speakerRaw = '') {
+    if (!isActive || !text) return;
+
+    const resolvedSpeaker = resolveIncomingSpeakerLabel(speakerRaw);
+
+    if (isContinuationOfLiveUtterance(liveUtterance, text, resolvedSpeaker)) {
+      liveUtterance.original = text;
+
+      // Nome chegou atrasado para a mesma Fala: assume o rótulo e anima a mudança.
+      if (isUnknownSpeakerLabel(liveUtterance.speaker) && !isUnknownSpeakerLabel(resolvedSpeaker)) {
+        liveUtterance.speaker = resolvedSpeaker;
+        updateSpeakerDisplay(resolvedSpeaker, true);
+      } else {
+        updateSpeakerDisplay(liveUtterance.speaker, false);
+      }
+    } else {
+      // Troca de falante (ou nenhuma Fala em andamento ainda): finaliza a anterior na hora.
+      if (liveUtterance) {
+        finalizeLiveUtterance();
+      }
+      liveUtterance = { speaker: resolvedSpeaker, original: text };
+      updateSpeakerDisplay(resolvedSpeaker, true);
     }
 
-    // Cancela debounce anterior
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
+    updateLiveSection(liveUtterance);
+    scheduleStabilityFinalization();
+  }
+
+  /**
+   * Agenda a finalização da Fala ao vivo por estabilidade (texto parado de mudar). Reiniciada a
+   * cada atualização; é cancelada mais cedo se uma troca de falante finalizar antes (ver
+   * handleCaptionChange).
+   */
+  function scheduleStabilityFinalization() {
+    if (stabilityTimer) {
+      clearTimeout(stabilityTimer);
     }
 
     const sessionAtSchedule = translationSessionToken;
 
-    // Aplica debounce
-    debounceTimer = setTimeout(async () => {
+    stabilityTimer = setTimeout(() => {
+      stabilityTimer = null;
       if (!isActive || sessionAtSchedule !== translationSessionToken) {
         return;
       }
-
-      const historyEntry = getOrCreateHistoryEntryForCaption(text, speaker);
-      const seq = translateSeqIncrement(historyEntry.id);
-
-      try {
-        setLoading(true);
-        const translation = await translate(text);
-
-        if (!isActive || sessionAtSchedule !== translationSessionToken) {
-          return;
-        }
-
-        if (translateSeqByEntryId.get(historyEntry.id) !== seq) {
-          return;
-        }
-
-        updateTranslatedText(translation);
-
-        updateHistoryEntryById(historyEntry.id, {
-          translated: translation,
-          status: 'done'
-        });
-
-        translationCount++;
-        updateStats();
-        updateStatsDisplay();
-      } catch (error) {
-        console.error('Erro na tradução:', error);
-
-        if (!isActive || sessionAtSchedule !== translationSessionToken) {
-          return;
-        }
-
-        if (translateSeqByEntryId.get(historyEntry.id) !== seq) {
-          return;
-        }
-        
-        // Mapeia erros para mensagens amigáveis
-        let errorMessage = CONFIG.ERROR_MESSAGES.UNKNOWN_ERROR;
-        if (error.message === 'NO_API_KEY') {
-          errorMessage = CONFIG.ERROR_MESSAGES.NO_API_KEY;
-        } else if (error.message === 'INVALID_API_KEY') {
-          errorMessage = CONFIG.ERROR_MESSAGES.INVALID_API_KEY;
-        } else if (error.message === 'RATE_LIMIT') {
-          errorMessage = CONFIG.ERROR_MESSAGES.RATE_LIMIT;
-        } else if (error.message.includes('network') || error.message.includes('fetch')) {
-          errorMessage = CONFIG.ERROR_MESSAGES.NETWORK_ERROR;
-        }
-        
-        const failedTranslation = 'Erro na tradução';
-        showError(errorMessage);
-        updateTranslatedText(failedTranslation);
-
-        updateHistoryEntryById(historyEntry.id, {
-          translated: failedTranslation,
-          status: 'error'
-        });
-      } finally {
-        if (!isActive || sessionAtSchedule !== translationSessionToken) {
-          setLoading(false);
-        } else if (translateSeqByEntryId.get(historyEntry.id) === seq) {
-          setLoading(false);
-        }
-      }
-    }, CONFIG.DEBOUNCE_DELAY);
+      finalizeLiveUtterance();
+    }, CONFIG.CAPTION_STABILITY_DELAY);
   }
 
   /**
@@ -1425,9 +1440,9 @@
       observer.disconnect();
       observer = null;
     }
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
+    if (stabilityTimer) {
+      clearTimeout(stabilityTimer);
+      stabilityTimer = null;
     }
   }
 
@@ -1467,10 +1482,16 @@
     const wasActive = isActive;
 
     isActive = false;
+    // Incrementa antes de finalizar: a tradução da última Fala usa o token NOVO, então
+    // ainda bate quando a resposta chegar (senão ficaria presa em "traduzindo" para sempre).
     translationSessionToken += 1;
 
+    // Se havia uma Fala em andamento, finaliza para não perder o que já foi dito.
+    if (liveUtterance) {
+      finalizeLiveUtterance();
+    }
+
     stopCaptionObserver();
-    lastCaptionText = '';
 
     hideTranslationBox();
 
@@ -1637,23 +1658,22 @@
         CONFIG.STORAGE_KEYS.API_TYPE,
         CONFIG.STORAGE_KEYS.API_KEY,
         CONFIG.STORAGE_KEYS.TARGET_LANGUAGE,
-        CONFIG.STORAGE_KEYS.HISTORY,
         CONFIG.STORAGE_KEYS.STATS,
         CONFIG.STORAGE_KEYS.SHOW_ORIGINAL
       ]);
-      
+
       currentApiType = result[CONFIG.STORAGE_KEYS.API_TYPE] || CONFIG.APIS.GOOGLE;
       currentApiKey = result[CONFIG.STORAGE_KEYS.API_KEY] || '';
       targetLanguage = result[CONFIG.STORAGE_KEYS.TARGET_LANGUAGE] || 'pt';
-      translationHistory = normalizeHistoryEntries(result[CONFIG.STORAGE_KEYS.HISTORY]);
-      translationSequence = translationHistory.reduce((maxId, entry) => Math.max(maxId, Number(entry.id) || 0), 0);
+      // Histórico exibido e Registro completo NÃO são recarregados do storage: seu escopo é a
+      // Sessão (a página atual do Meet) — ver ADR 0002. Cada carregamento de página começa vazio.
       showOriginalText = result[CONFIG.STORAGE_KEYS.SHOW_ORIGINAL] !== false;
-      
+
       const stats = result[CONFIG.STORAGE_KEYS.STATS];
       if (stats) {
         translationCount = stats.totalTranslations || 0;
       }
-      
+
       console.log('Meet Translator: Configurações carregadas');
     } catch (error) {
       console.error('Erro ao carregar configurações:', error);

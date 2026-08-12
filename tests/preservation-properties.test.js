@@ -498,24 +498,23 @@ test('Unit: Translation session token increments on start/stop', async () => {
   assert.strictEqual(token2, 2, 'Second token should be 2');
 });
 
-test('Unit: History size limit enforcement', async () => {
+test('Unit: Displayed history respects its size cap, full transcript log never does', async () => {
   /**
    * **Validates: Requirement 3.4 (Export functionality maintains history structure)**
-   * 
-   * The history array SHALL:
-   * - Respect CONFIG.HISTORY_SIZE limit (50 entries)
-   * - Remove oldest entries when limit is exceeded
-   * - Maintain chronological order
-   * 
-   * This behavior must remain identical before and after the bugfix.
+   *
+   * Updated by the dual-buffer bugfix (ADR 0001/0002): the Histórico exibido (displayed in the
+   * floating box) still respects CONFIG.HISTORY_SIZE, now 25 instead of 50 — but the Registro
+   * completo (used for export) is never capped, so a long meeting's export is never missing
+   * entries the displayed box had to drop for UI performance.
    */
-  
-  const HISTORY_SIZE = 50;
+
+  const HISTORY_SIZE = 25;
   let translationHistory = [];
-  
-  // Add 55 entries (exceeds limit)
-  for (let i = 1; i <= 55; i++) {
-    translationHistory.push({
+  let fullTranscriptLog = [];
+
+  // Add 30 entries (exceeds the displayed cap)
+  for (let i = 1; i <= 30; i++) {
+    const entry = {
       id: i,
       timestamp: new Date().toISOString(),
       speaker: 'Test Speaker',
@@ -524,25 +523,30 @@ test('Unit: History size limit enforcement', async () => {
       status: 'done',
       api: 'google',
       targetLang: 'pt'
-    });
-    
-    // Simulate history size enforcement
+    };
+
+    fullTranscriptLog.push(entry);
+    translationHistory.push(entry);
+
+    // Simulate displayed-history size enforcement
     if (translationHistory.length > HISTORY_SIZE) {
-      translationHistory.shift(); // Remove oldest
+      translationHistory.shift(); // Remove oldest from the displayed view only
     }
   }
-  
-  // Verify size limit is respected
-  assert.strictEqual(translationHistory.length, HISTORY_SIZE, 
-    'History should not exceed HISTORY_SIZE limit');
-  
-  // Verify oldest entries were removed (should start with id 6, not 1)
-  assert.strictEqual(translationHistory[0].id, 6, 
-    'Oldest entries should be removed first');
-  
-  // Verify newest entries are preserved
-  assert.strictEqual(translationHistory[translationHistory.length - 1].id, 55,
-    'Newest entries should be preserved');
+
+  // Displayed history respects the cap
+  assert.strictEqual(translationHistory.length, HISTORY_SIZE,
+    'Displayed history should not exceed HISTORY_SIZE limit');
+  assert.strictEqual(translationHistory[0].id, 6,
+    'Oldest entries should be dropped from the displayed view first');
+  assert.strictEqual(translationHistory[translationHistory.length - 1].id, 30,
+    'Newest entries should be preserved in the displayed view');
+
+  // Full transcript log keeps everything, for export
+  assert.strictEqual(fullTranscriptLog.length, 30,
+    'Full transcript log should never drop entries');
+  assert.strictEqual(fullTranscriptLog[0].id, 1,
+    'Full transcript log should keep the very first entry of the session');
 });
 
 test('Unit: Speaker name normalization', async () => {
