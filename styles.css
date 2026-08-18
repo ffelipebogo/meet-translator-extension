@@ -52,7 +52,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 10px 16px;
   background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
   cursor: grab;
   user-select: none;
@@ -130,11 +130,28 @@
    ============================================ */
 
 .mt-content {
-  padding: 16px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ============================================
+   RASCUNHO AO VIVO — faixa fixa embaixo do painel, sempre visível (não rola)
+   ============================================ */
+
+.mt-live-section {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  max-height: 100%;
   overflow-y: auto;
 }
 
@@ -145,11 +162,11 @@
 .mt-speaker-section {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 5px 12px;
   background: linear-gradient(135deg, rgba(255, 193, 7, 0.15) 0%, rgba(255, 152, 0, 0.1) 100%);
-  border-radius: 10px;
-  border-left: 4px solid #ffc107;
+  border-radius: 8px;
+  border-left: 3px solid #ffc107;
   transition: all 0.3s ease;
 }
 
@@ -174,7 +191,7 @@
 }
 
 .mt-section {
-  padding: 12px 14px;
+  padding: 8px 12px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.05);
   border-left: 4px solid;
@@ -200,7 +217,7 @@
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: rgba(255, 255, 255, 0.5);
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 
 .mt-text {
@@ -247,7 +264,7 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 12px;
+  padding: 6px;
   color: rgba(255, 255, 255, 0.7);
   font-size: 13px;
 }
@@ -272,7 +289,7 @@
    ============================================ */
 
 .mt-error {
-  padding: 10px 14px;
+  padding: 6px 12px;
   background: rgba(234, 67, 53, 0.15);
   border: 1px solid rgba(234, 67, 53, 0.3);
   border-radius: 8px;
@@ -292,16 +309,18 @@
    ============================================ */
 
 .mt-history-section {
-  margin-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 10px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .mt-history-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   font-size: 12px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.6);
@@ -316,14 +335,16 @@
 
 .mt-history-list-wrapper {
   position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 .mt-history-list {
-  max-height: 200px;
+  height: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .mt-jump-to-latest {
@@ -350,6 +371,10 @@
   background: #1765cc;
 }
 
+.mt-history-section.mt-history-collapsed {
+  flex: none;
+}
+
 .mt-history-section.mt-history-collapsed .mt-history-list-wrapper {
   display: none;
 }
@@ -366,7 +391,7 @@
 }
 
 .mt-history-item {
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 8px;
   border-left: 3px solid rgba(26, 115, 232, 0.5);
@@ -377,7 +402,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   gap: 8px;
 }
 
@@ -425,32 +450,6 @@
 
 .mt-history-list::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
-}
-
-/* ============================================
-   FOOTER
-   ============================================ */
-
-.mt-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  background: rgba(0, 0, 0, 0.3);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.mt-stats,
-.mt-api {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-  font-weight: 500;
-}
-
-.mt-api {
-  padding: 3px 8px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
 }
 
 /* ============================================
@@ -607,20 +606,6 @@
 
 #meet-translator-box.mt-theme-light .mt-original .mt-text {
   color: rgba(0, 0, 0, 0.8);
-}
-
-#meet-translator-box.mt-theme-light .mt-footer {
-  background: rgba(0, 0, 0, 0.03);
-  border-top-color: rgba(0, 0, 0, 0.05);
-}
-
-#meet-translator-box.mt-theme-light .mt-stats,
-#meet-translator-box.mt-theme-light .mt-api {
-  color: rgba(0, 0, 0, 0.5);
-}
-
-#meet-translator-box.mt-theme-light .mt-api {
-  background: rgba(0, 0, 0, 0.05);
 }
 
 #meet-translator-box.mt-theme-light .mt-history-section {

@@ -96,11 +96,13 @@ const CONFIG = {
   ],
 
   // Configurações de performance
-  CAPTION_STABILITY_DELAY: 1000,    // Tempo sem mudança de texto até finalizar a Fala ao vivo
-  MAX_RETRIES: 3,                   // Tentativas máximas em caso de erro
+  LIVE_UTTERANCE_IDLE_TIMEOUT: 60000, // Rede de segurança: tempo sem NENHUMA atualização até finalizar uma Fala (ativa ou pausada) — ver ADR 0004
+  MAX_PAUSED_SPEAKERS: 2,            // Quantos falantes "pausados" (trocaram de vez mas podem retomar) ficam em espera antes de virar Entrada finalizada — ver ADR 0004
+  MAX_RETRIES: 3,                   // Tentativas máximas em caso de erro (só na tradução da Entrada finalizada)
   RETRY_DELAY: 1000,                // Delay entre tentativas em ms
   CACHE_SIZE: 100,                  // Número máximo de traduções em cache
   HISTORY_SIZE: 25,                 // Número máximo de entradas no Histórico exibido (a exportação usa o Registro completo, sem limite)
+  LIVE_TRANSLATION_MIN_LENGTH: 3,   // Tamanho mínimo (trim) do Rascunho ao vivo antes da 1ª Tradução provisória (ADR 0003)
 
   // Configurações da interface
   UI: {
@@ -144,7 +146,7 @@ const CONFIG = {
   },
 
   // Versão da extensão
-  VERSION: '1.4.3'
+  VERSION: '1.5.1'
 };
 
 // Exporta para uso em outros scripts (se necessário)

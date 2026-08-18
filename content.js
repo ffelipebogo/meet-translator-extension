@@ -18,10 +18,22 @@
   let currentApiType = CONFIG.APIS.GOOGLE; // API selecionada
   let currentApiKey = '';                  // Chave da API
   let targetLanguage = 'pt';               // Idioma alvo
-  /** Fala em andamento, ainda não finalizada: { speaker, original } | null */
+  /**
+   * Fala em andamento, ainda não finalizada — a única exibida na caixinha. `translated` é a
+   * Tradução provisória (ADR 0003); `translationInFlight`/`needsRetranslate` controlam o
+   * coalescing de no máximo uma chamada de tradução provisória em voo por vez.
+   * { speaker, original, translated, translationInFlight, needsRetranslate, idleTimer } | null
+   */
   let liveUtterance = null;
-  /** Agenda a finalização por estabilidade (~1s sem mudança); trocada por troca de falante */
-  let stabilityTimer = null;
+  /** Agenda a finalização por inatividade (rede de segurança, ver ADR 0004) da `liveUtterance` atual */
+  let liveIdleTimer = null;
+  /**
+   * Falas de outros falantes, interrompidas por troca de falante mas ainda não finalizadas —
+   * podem "retomar" se o mesmo falante voltar a falar antes de expirar. Ver ADR 0004.
+   * No máximo CONFIG.MAX_PAUSED_SPEAKERS ao mesmo tempo (mais antiga é evicted quando cheio).
+   * Array<{ speaker, original, translated, translationInFlight, needsRetranslate, idleTimer }>
+   */
+  let pausedUtterances = [];
   let translationCache = new Map();        // Cache de traduções
   let translationHistory = [];             // Histórico exibido (cap CONFIG.HISTORY_SIZE), escopo da Sessão
   /** Registro completo da Sessão, sem cap e sem truncar texto — usado só pela exportação (ADR 0002) */
@@ -171,7 +183,34 @@
   }
 
   /**
-   * Função principal de tradução com retry
+   * Dispara uma única tentativa de tradução na API atualmente selecionada, sem cache e sem retry.
+   * Usada tanto pelo `translate()` (dentro do laço de retry) quanto diretamente pela Tradução
+   * provisória (ADR 0003), que precisa de tentativas independentes e nunca de backoff.
+   * @param {string} text - Texto para traduzir
+   * @returns {Promise<string>} Texto traduzido
+   */
+  async function translateOnce(text) {
+    switch (currentApiType) {
+      case CONFIG.APIS.GOOGLE:
+        return await translateWithGoogle(text, targetLanguage);
+      case CONFIG.APIS.CLAUDE:
+        if (!currentApiKey) {
+          throw new Error('NO_API_KEY');
+        }
+        return await translateWithClaude(text, targetLanguage, currentApiKey);
+      case CONFIG.APIS.OPENAI:
+        if (!currentApiKey) {
+          throw new Error('NO_API_KEY');
+        }
+        return await translateWithOpenAI(text, targetLanguage, currentApiKey);
+      default:
+        return await translateWithGoogle(text, targetLanguage);
+    }
+  }
+
+  /**
+   * Função principal de tradução, com cache e retry — usada só para a Entrada finalizada (ADR
+   * 0003 manteve a Tradução provisória fora do cache e sem retry, ver `scheduleLiveTranslation`).
    * @param {string} text - Texto para traduzir
    * @returns {Promise<string>} Texto traduzido
    */
@@ -184,30 +223,10 @@
     }
 
     let lastError = null;
-    
+
     for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
       try {
-        let translation;
-        
-        switch (currentApiType) {
-          case CONFIG.APIS.GOOGLE:
-            translation = await translateWithGoogle(text, targetLanguage);
-            break;
-          case CONFIG.APIS.CLAUDE:
-            if (!currentApiKey) {
-              throw new Error('NO_API_KEY');
-            }
-            translation = await translateWithClaude(text, targetLanguage, currentApiKey);
-            break;
-          case CONFIG.APIS.OPENAI:
-            if (!currentApiKey) {
-              throw new Error('NO_API_KEY');
-            }
-            translation = await translateWithOpenAI(text, targetLanguage, currentApiKey);
-            break;
-          default:
-            translation = await translateWithGoogle(text, targetLanguage);
-        }
+        const translation = await translateOnce(text);
 
         // Salva no cache
         if (translationCache.size >= CONFIG.CACHE_SIZE) {
@@ -220,19 +239,61 @@
       } catch (error) {
         lastError = error;
         console.warn(`Tentativa ${attempt} falhou:`, error.message);
-        
+
         // Se for erro de API key ou rate limit, não tenta novamente
         if (error.message === 'INVALID_API_KEY' || error.message === 'NO_API_KEY') {
           throw error;
         }
-        
+
         if (attempt < CONFIG.MAX_RETRIES) {
           await new Promise(resolve => setTimeout(resolve, CONFIG.RETRY_DELAY * attempt));
         }
       }
     }
-    
+
     throw lastError || new Error('Falha ao traduzir após múltiplas tentativas');
+  }
+
+  /**
+   * Traduz o Rascunho ao vivo continuamente (Tradução provisória, ADR 0003). No máximo uma
+   * chamada em voo por vez por Fala: mutações que chegam enquanto uma chamada já está em voo só
+   * marcam `needsRetranslate`, pego pela rodada seguinte assim que a chamada atual resolver — isso
+   * substitui debounce/token-de-sequência por uma única chamada coalescida por round-trip.
+   * Nunca usa o `translationCache` (o texto muda a cada chamada, então quase nunca bateria) e nunca
+   * faz retry (a próxima mutação já é uma nova tentativa natural). Descarta silenciosamente
+   * qualquer resposta cuja Fala não seja mais a atual — nova Fala ou finalização já zeraram
+   * `liveUtterance`, então a comparação de identidade do objeto basta como guarda.
+   * @param {object} utterance - a mesma referência guardada em `liveUtterance`
+   */
+  async function scheduleLiveTranslation(utterance) {
+    if (!meetsMinimumLiveTranslationLength(utterance.original)) return;
+
+    if (utterance.translationInFlight) {
+      utterance.needsRetranslate = true;
+      return;
+    }
+
+    utterance.translationInFlight = true;
+    utterance.needsRetranslate = false;
+    const sessionAtSchedule = translationSessionToken;
+    const textAtCallTime = utterance.original;
+
+    try {
+      const translation = await translateOnce(textAtCallTime);
+
+      if (sessionAtSchedule === translationSessionToken && liveUtterance === utterance) {
+        utterance.translated = translation;
+        updateLiveSection(utterance);
+      }
+    } catch (error) {
+      console.warn('Meet Translator: falha na Tradução provisória (sem retry):', error.message);
+    } finally {
+      utterance.translationInFlight = false;
+
+      if (sessionAtSchedule === translationSessionToken && liveUtterance === utterance && utterance.needsRetranslate) {
+        scheduleLiveTranslation(utterance);
+      }
+    }
   }
 
   // ============================================
@@ -284,6 +345,14 @@
   }
 
   /**
+   * Evita gastar uma chamada de tradução em fragmentos irrisórios ("H", "Ol") logo no início de
+   * uma Fala — a Tradução provisória só começa a partir de um texto com tamanho mínimo (ADR 0003).
+   */
+  function meetsMinimumLiveTranslationLength(text) {
+    return String(text || '').trim().length >= CONFIG.LIVE_TRANSLATION_MIN_LENGTH;
+  }
+
+  /**
    * Reduz uma legenda crua a um rótulo de falante nunca vazio ("Desconhecido" se não identificado).
    * Nunca herda o último falante conhecido — é exatamente essa herança que misturava falas de
    * pessoas diferentes na heurística anterior (ver ADR 0001).
@@ -318,35 +387,133 @@
   }
 
   /**
-   * Finaliza a Fala ao vivo atual: vira uma Entrada finalizada imutável (histórico + registro
-   * completo) e dispara a tradução. Depois de finalizada, original/falante nunca mais mudam.
+   * Acha, entre as Falas pausadas, a de um falante nomeado específico (ADR 0004). Um falante
+   * desconhecido nunca "retoma" uma pausada — mesmo critério de isUnknownSpeakerLabel usado em
+   * isContinuationOfLiveUtterance, pela mesma razão: não arriscar herdar a fala errada.
    */
-  function finalizeLiveUtterance() {
-    if (!liveUtterance) return null;
+  function findPausedIndexForSpeaker(pausedList, speaker) {
+    if (isUnknownSpeakerLabel(speaker)) return -1;
+    return pausedList.findIndex(u => normalizeSpeakerName(u.speaker) === normalizeSpeakerName(speaker));
+  }
 
-    if (stabilityTimer) {
-      clearTimeout(stabilityTimer);
-      stabilityTimer = null;
-    }
-
+  /**
+   * Vira uma Entrada finalizada imutável (histórico + registro completo) e dispara a tradução.
+   * Usada tanto para a Fala ao vivo quanto para uma Fala pausada que está sendo commitada
+   * (retomada, evicted ou expirada por inatividade) — ver ADR 0004. Usa `utterance.startedAt`
+   * (carimbado quando a Fala começou) em vez do horário do commit: uma pausada pode ficar em
+   * espera por até 60s antes de commitar, e o Registro completo precisa refletir quando a pessoa
+   * realmente falou, não quando o buffer foi liberado.
+   */
+  function commitUtterance(utterance) {
     const entry = {
       id: getNextHistoryId(),
-      timestamp: new Date().toISOString(),
-      speaker: liveUtterance.speaker,
-      original: liveUtterance.original,
+      timestamp: utterance.startedAt || new Date().toISOString(),
+      speaker: utterance.speaker,
+      original: utterance.original,
       translated: '',
       status: 'translating',
       api: currentApiType,
       targetLang: targetLanguage
     };
 
-    liveUtterance = null;
-    updateLiveSection(null);
-
     appendFinalizedEntry(entry);
     translateFinalizedEntry(entry);
 
     return entry;
+  }
+
+  /**
+   * Finaliza a Fala ao vivo atual (a única exibida na caixinha). Depois de finalizada,
+   * original/falante nunca mais mudam.
+   */
+  function finalizeLiveUtterance() {
+    if (!liveUtterance) return null;
+
+    if (liveIdleTimer) {
+      clearTimeout(liveIdleTimer);
+      liveIdleTimer = null;
+    }
+
+    const utterance = liveUtterance;
+    liveUtterance = null;
+    updateLiveSection(null);
+
+    return commitUtterance(utterance);
+  }
+
+  /**
+   * Remove uma Fala pausada da fila (se ainda estiver nela) e a finaliza. Ponto único usado pelos
+   * três gatilhos de commit de uma pausada: o falante retoma a fala (Q6 — sem juntar texto, essa
+   * pausada simplesmente vira sua própria Entrada finalizada), a fila de pausadas está cheia e
+   * esta é a mais antiga (eviction), ou a rede de segurança de inatividade expirou. Ver ADR 0004.
+   */
+  function commitPausedUtterance(utterance) {
+    if (utterance.idleTimer) {
+      clearTimeout(utterance.idleTimer);
+      utterance.idleTimer = null;
+    }
+
+    const idx = pausedUtterances.indexOf(utterance);
+    if (idx !== -1) {
+      pausedUtterances.splice(idx, 1);
+    }
+
+    return commitUtterance(utterance);
+  }
+
+  /**
+   * Agenda a rede de segurança de uma Fala pausada: se ninguém retomar em
+   * CONFIG.LIVE_UTTERANCE_IDLE_TIMEOUT, ela vira Entrada finalizada sozinha (ver ADR 0004).
+   */
+  function schedulePausedIdleFinalization(utterance) {
+    const sessionAtSchedule = translationSessionToken;
+
+    return setTimeout(() => {
+      utterance.idleTimer = null;
+      if (!isActive || sessionAtSchedule !== translationSessionToken) return;
+      commitPausedUtterance(utterance);
+    }, CONFIG.LIVE_UTTERANCE_IDLE_TIMEOUT);
+  }
+
+  /**
+   * Move a Fala ao vivo atual (que está deixando de ser a exibida, por troca de falante) para a
+   * fila de pausadas/retomáveis, no máximo CONFIG.MAX_PAUSED_SPEAKERS ao mesmo tempo — se estiver
+   * cheia, a mais antiga é commitada agora (eviction, nunca descartada silenciosamente). Ver ADR 0004.
+   */
+  function pauseLiveUtterance(utterance) {
+    if (liveIdleTimer) {
+      clearTimeout(liveIdleTimer);
+      liveIdleTimer = null;
+    }
+
+    if (pausedUtterances.length >= CONFIG.MAX_PAUSED_SPEAKERS) {
+      commitPausedUtterance(pausedUtterances[0]);
+    }
+
+    utterance.idleTimer = schedulePausedIdleFinalization(utterance);
+    pausedUtterances.push(utterance);
+  }
+
+  /**
+   * Começa uma Fala ao vivo nova para o falante que acabou de assumir. Se ele tinha uma Fala
+   * pausada em espera (estava falando antes, foi interrompido, e voltou), essa pausada é
+   * commitada agora como sua própria Entrada finalizada — nunca é reaberta/mesclada com o texto
+   * novo (decisão Q6 da ADR 0004).
+   */
+  function startNewLiveUtterance(speaker, text) {
+    const pausedIdx = findPausedIndexForSpeaker(pausedUtterances, speaker);
+    if (pausedIdx !== -1) {
+      commitPausedUtterance(pausedUtterances[pausedIdx]);
+    }
+
+    return {
+      speaker,
+      original: text,
+      translated: '',
+      translationInFlight: false,
+      needsRetranslate: false,
+      startedAt: new Date().toISOString()
+    };
   }
 
   /**
@@ -414,7 +581,6 @@
 
       translationCount++;
       updateStats();
-      updateStatsDisplay();
     } catch (error) {
       console.error('Erro na tradução:', error);
 
@@ -505,23 +671,6 @@
         </div>
       </div>
       <div class="mt-content">
-        <div class="mt-speaker-section" id="mt-speaker-section">
-          <span class="mt-speaker-icon">🎤</span>
-          <span class="mt-speaker-name" id="mt-speaker-name">Aguardando...</span>
-        </div>
-        <div class="mt-section mt-original">
-          <div class="mt-label">Original</div>
-          <div class="mt-text" id="mt-original-text">Aguardando legendas...</div>
-        </div>
-        <div class="mt-section mt-translated">
-          <div class="mt-label">Tradução (${CONFIG.LANGUAGES[targetLanguage] || targetLanguage})</div>
-          <div class="mt-text" id="mt-translated-text">-</div>
-        </div>
-        <div class="mt-loading" id="mt-loading" style="display: none;">
-          <div class="mt-spinner"></div>
-          <span>Traduzindo...</span>
-        </div>
-        <div class="mt-error" id="mt-error" style="display: none;"></div>
         <div class="mt-history-section" id="mt-history-section">
           <div class="mt-history-header">
             <span>Mensagens anteriores</span>
@@ -532,12 +681,27 @@
             <button class="mt-jump-to-latest" id="mt-jump-to-latest" style="display: none;">↓ Nova mensagem</button>
           </div>
         </div>
+        <div class="mt-live-section" id="mt-live-section">
+          <div class="mt-speaker-section" id="mt-speaker-section">
+            <span class="mt-speaker-icon">🎤</span>
+            <span class="mt-speaker-name" id="mt-speaker-name">Aguardando...</span>
+          </div>
+          <div class="mt-section mt-original">
+            <div class="mt-label">Original</div>
+            <div class="mt-text" id="mt-original-text">Aguardando legendas...</div>
+          </div>
+          <div class="mt-section mt-translated">
+            <div class="mt-label">Tradução (${CONFIG.LANGUAGES[targetLanguage] || targetLanguage})</div>
+            <div class="mt-text" id="mt-translated-text">-</div>
+          </div>
+          <div class="mt-loading" id="mt-loading" style="display: none;">
+            <div class="mt-spinner"></div>
+            <span>Traduzindo...</span>
+          </div>
+          <div class="mt-error" id="mt-error" style="display: none;"></div>
+        </div>
       </div>
-      <div class="mt-footer">
-        <span class="mt-stats" id="mt-stats">Traduções: 0</span>
-        <span class="mt-api">API: ${currentApiType.toUpperCase()}</span>
-      </div>
-      
+
       <!-- Handles de redimensionamento -->
       <div class="mt-resize-handle mt-resize-n" data-direction="n"></div>
       <div class="mt-resize-handle mt-resize-s" data-direction="s"></div>
@@ -941,7 +1105,7 @@
     }
 
     updateOriginalText(live.original);
-    updateTranslatedText('Traduzindo assim que esta fala terminar...');
+    updateTranslatedText(live.translated || 'Traduzindo...');
     sections.forEach(el => el?.classList.add('mt-live-pending'));
   }
 
@@ -991,16 +1155,6 @@
       setTimeout(() => {
         errorElement.style.display = 'none';
       }, 5000);
-    }
-  }
-
-  /**
-   * Atualiza contador de estatísticas
-   */
-  function updateStatsDisplay() {
-    const statsElement = document.getElementById('mt-stats');
-    if (statsElement) {
-      statsElement.textContent = `Traduções: ${translationCount}`;
     }
   }
 
@@ -1305,37 +1459,42 @@
         updateSpeakerDisplay(liveUtterance.speaker, false);
       }
     } else {
-      // Troca de falante (ou nenhuma Fala em andamento ainda): finaliza a anterior na hora.
+      // Troca de falante (ou nenhuma Fala em andamento ainda): a anterior vai para a fila de
+      // pausadas/retomáveis em vez de finalizar na hora (ver ADR 0004).
       if (liveUtterance) {
-        finalizeLiveUtterance();
+        pauseLiveUtterance(liveUtterance);
       }
-      liveUtterance = { speaker: resolvedSpeaker, original: text };
+      liveUtterance = startNewLiveUtterance(resolvedSpeaker, text);
       updateSpeakerDisplay(resolvedSpeaker, true);
     }
 
     updateLiveSection(liveUtterance);
-    scheduleStabilityFinalization();
+    scheduleLiveUtteranceIdleTimeout();
+    scheduleLiveTranslation(liveUtterance);
   }
 
   /**
-   * Agenda a finalização da Fala ao vivo por estabilidade (texto parado de mudar). Reiniciada a
-   * cada atualização; é cancelada mais cedo se uma troca de falante finalizar antes (ver
-   * handleCaptionChange).
+   * Agenda a rede de segurança de inatividade da Fala ao vivo atual: se ninguém atualizar a
+   * legenda por CONFIG.LIVE_UTTERANCE_IDLE_TIMEOUT, ela finaliza sozinha. Reiniciada a cada
+   * atualização (mesmo falante continuando); é cancelada mais cedo se uma troca de falante a
+   * pausar antes (ver handleCaptionChange/pauseLiveUtterance). Ver ADR 0004: ao contrário do
+   * comportamento anterior (ADR 0001, ~1s de estabilidade), uma pausa do MESMO falante nunca
+   * finaliza sozinha — só uma troca de falante ou esta rede de segurança o fazem.
    */
-  function scheduleStabilityFinalization() {
-    if (stabilityTimer) {
-      clearTimeout(stabilityTimer);
+  function scheduleLiveUtteranceIdleTimeout() {
+    if (liveIdleTimer) {
+      clearTimeout(liveIdleTimer);
     }
 
     const sessionAtSchedule = translationSessionToken;
 
-    stabilityTimer = setTimeout(() => {
-      stabilityTimer = null;
+    liveIdleTimer = setTimeout(() => {
+      liveIdleTimer = null;
       if (!isActive || sessionAtSchedule !== translationSessionToken) {
         return;
       }
       finalizeLiveUtterance();
-    }, CONFIG.CAPTION_STABILITY_DELAY);
+    }, CONFIG.LIVE_UTTERANCE_IDLE_TIMEOUT);
   }
 
   /**
@@ -1440,9 +1599,9 @@
       observer.disconnect();
       observer = null;
     }
-    if (stabilityTimer) {
-      clearTimeout(stabilityTimer);
-      stabilityTimer = null;
+    if (liveIdleTimer) {
+      clearTimeout(liveIdleTimer);
+      liveIdleTimer = null;
     }
   }
 
@@ -1486,9 +1645,13 @@
     // ainda bate quando a resposta chegar (senão ficaria presa em "traduzindo" para sempre).
     translationSessionToken += 1;
 
-    // Se havia uma Fala em andamento, finaliza para não perder o que já foi dito.
+    // Se havia uma Fala em andamento (ou pausadas em espera de retomada), finaliza todas para
+    // não perder o que já foi dito (ver ADR 0004 — nunca descarta silenciosamente).
     if (liveUtterance) {
       finalizeLiveUtterance();
+    }
+    while (pausedUtterances.length > 0) {
+      commitPausedUtterance(pausedUtterances[0]);
     }
 
     stopCaptionObserver();
@@ -1583,11 +1746,6 @@
           
         case 'updateApiType':
           currentApiType = message.apiType || CONFIG.APIS.GOOGLE;
-          // Atualiza display da API na caixa
-          const apiDisplay = translationBox?.querySelector('.mt-api');
-          if (apiDisplay) {
-            apiDisplay.textContent = `API: ${currentApiType.toUpperCase()}`;
-          }
           sendResponse({ success: true });
           break;
           

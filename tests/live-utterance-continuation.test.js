@@ -3,12 +3,14 @@
  *
  * Mirrors the pure functions in content.js (isContinuationOfLiveUtterance,
  * isScrolledToBottom, normalizeSpeakerName, isUnknownSpeakerLabel,
- * isSameCaptionTextExtension) so they can be unit/property tested without a
+ * isSameCaptionTextExtension, meetsMinimumLiveTranslationLength,
+ * findPausedIndexForSpeaker) so they can be unit/property tested without a
  * DOM or chrome.* environment. Keep in sync with content.js if those change.
  *
  * Validates the dual-buffer design agreed in ADR 0001: a live utterance only
  * continues (instead of being finalized and replaced by a new one) when we
- * have strong evidence it's still the same speaker talking.
+ * have strong evidence it's still the same speaker talking. Also validates
+ * the paused/resumable speaker matching from ADR 0004.
  */
 
 import { test } from 'node:test';
@@ -48,6 +50,17 @@ function isContinuationOfLiveUtterance(live, incomingText, incomingSpeaker) {
 function isScrolledToBottom(scrollTop, scrollHeight, clientHeight, threshold = 50) {
   if (scrollHeight <= clientHeight) return true;
   return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+function findPausedIndexForSpeaker(pausedList, speaker) {
+  if (isUnknownSpeakerLabel(speaker)) return -1;
+  return pausedList.findIndex(u => normalizeSpeakerName(u.speaker) === normalizeSpeakerName(speaker));
+}
+
+const LIVE_TRANSLATION_MIN_LENGTH = 3;
+
+function meetsMinimumLiveTranslationLength(text) {
+  return String(text || '').trim().length >= LIVE_TRANSLATION_MIN_LENGTH;
 }
 
 // ============================================
@@ -155,4 +168,84 @@ test('beyond the threshold does not count as at bottom', () => {
 
 test('content shorter than the viewport is always at bottom', () => {
   assert.strictEqual(isScrolledToBottom(0, 200, 300), true);
+});
+
+// ============================================
+// findPausedIndexForSpeaker (ADR 0004 — falantes pausados/retomáveis)
+// ============================================
+
+test('no speaker match in an empty paused list', () => {
+  assert.strictEqual(findPausedIndexForSpeaker([], 'Alice'), -1);
+});
+
+test('finds the paused utterance for a matching named speaker', () => {
+  const paused = [{ speaker: 'Bob', original: 'x' }, { speaker: 'Alice', original: 'y' }];
+  assert.strictEqual(findPausedIndexForSpeaker(paused, 'Alice'), 1);
+});
+
+test('speaker name comparison is case/whitespace insensitive, same as continuation matching', () => {
+  const paused = [{ speaker: 'Alice', original: 'y' }];
+  assert.strictEqual(findPausedIndexForSpeaker(paused, '  ALICE  '), 0);
+});
+
+test('an unknown/empty incoming speaker never matches a paused utterance', () => {
+  const paused = [{ speaker: 'Alice', original: 'y' }, { speaker: 'Desconhecido', original: 'z' }];
+  assert.strictEqual(findPausedIndexForSpeaker(paused, ''), -1);
+  assert.strictEqual(findPausedIndexForSpeaker(paused, 'Desconhecido'), -1);
+});
+
+test('a named speaker with no matching paused utterance returns -1', () => {
+  const paused = [{ speaker: 'Bob', original: 'x' }];
+  assert.strictEqual(findPausedIndexForSpeaker(paused, 'Alice'), -1);
+});
+
+test('property: a paused speaker is always found regardless of position in the list', () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.string({ minLength: 1, maxLength: 20 }).filter(s => !isUnknownSpeakerLabel(s)), { minLength: 1, maxLength: 5 }),
+      (speakers) => {
+        const uniqueSpeakers = [...new Set(speakers.map(normalizeSpeakerName))];
+        fc.pre(uniqueSpeakers.length === speakers.length);
+        const paused = speakers.map(speaker => ({ speaker, original: 'x' }));
+        return speakers.every((speaker, idx) => findPausedIndexForSpeaker(paused, speaker) === idx);
+      }
+    ),
+    { numRuns: 30 }
+  );
+});
+
+// ============================================
+// meetsMinimumLiveTranslationLength (ADR 0003)
+// ============================================
+
+test('single-character fragments do not meet the minimum for a provisional translation', () => {
+  assert.strictEqual(meetsMinimumLiveTranslationLength('H'), false);
+  assert.strictEqual(meetsMinimumLiveTranslationLength('Ol'), false);
+});
+
+test('empty, whitespace-only or missing text never meets the minimum', () => {
+  assert.strictEqual(meetsMinimumLiveTranslationLength(''), false);
+  assert.strictEqual(meetsMinimumLiveTranslationLength('   '), false);
+  assert.strictEqual(meetsMinimumLiveTranslationLength(undefined), false);
+  assert.strictEqual(meetsMinimumLiveTranslationLength(null), false);
+});
+
+test('text at or above the minimum length meets it', () => {
+  assert.strictEqual(meetsMinimumLiveTranslationLength('Ola'), true);
+  assert.strictEqual(meetsMinimumLiveTranslationLength('Olá pessoal'), true);
+});
+
+test('leading/trailing whitespace is trimmed before measuring', () => {
+  assert.strictEqual(meetsMinimumLiveTranslationLength('  Oi  '), false);
+  assert.strictEqual(meetsMinimumLiveTranslationLength('  Oiii  '), true);
+});
+
+test('property: only text whose trimmed length reaches the minimum passes', () => {
+  fc.assert(
+    fc.property(fc.string({ maxLength: 50 }), (text) => {
+      const expected = text.trim().length >= LIVE_TRANSLATION_MIN_LENGTH;
+      return meetsMinimumLiveTranslationLength(text) === expected;
+    }),
+    { numRuns: 100 }
+  );
 });

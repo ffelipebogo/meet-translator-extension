@@ -9,11 +9,19 @@ Trecho contínuo de fala de uma única pessoa, do início até ela parar ou até
 _Avoid_: legenda, caption block, linha (descrevem o dado bruto do Meet, não a unidade de negócio)
 
 **Rascunho ao vivo** (Live Buffer):
-A Fala que ainda está sendo captada/alterada pelo Meet — exibida na caixinha mas ainda não finalizada, podendo mudar até estabilizar.
+A Fala do falante atual, ainda não finalizada — a única exibida na caixinha, mudando livremente enquanto o mesmo falante continua (mesmo com pausas; ver ADR 0004). Carrega uma Tradução provisória, recalculada a cada mutação do texto original, nunca gravada em cache nem em histórico.
 _Avoid_: legenda atual
 
+**Tradução provisória** (Provisional Translation):
+Tradução do Rascunho ao vivo enquanto ele ainda está mudando — recalculada a cada nova mutação do texto original (sem debounce), sempre descartável e nunca persistida. Exibida com o mesmo tratamento visual de "ainda ao vivo" usado para o texto original do Rascunho ao vivo, para deixar claro que a redação pode mudar. É sempre substituída, nunca mesclada, pela Tradução final quando a Fala se torna Entrada finalizada — mesmo que a última Tradução provisória já estivesse correta.
+_Avoid_: confundir com a tradução da Entrada finalizada, que é a única persistida/exportável
+
 **Entrada finalizada** (Finalized Entry):
-Uma Fala que parou de mudar (estabilizou) ou foi interrompida por troca de falante, e por isso virou um registro imutável do histórico. Nunca é reescrita depois de criada.
+Uma Fala (ao vivo ou pausada) que virou um registro imutável do histórico — por retomada do falante, eviction, expiração da rede de segurança de inatividade (60s) ou por parar a tradução (ver ADR 0004). Nunca é reescrita depois de criada.
+
+**Fala pausada** (Paused Utterance):
+Uma Fala interrompida por troca de falante que ainda não virou Entrada finalizada — fica em espera para o caso do mesmo falante retomar. No máximo `CONFIG.MAX_PAUSED_SPEAKERS` (2) pausadas ao mesmo tempo; a mais antiga é commitada (finalizada) se uma 3ª pessoa distinta começa a falar. Se o falante retoma, a pausada é commitada imediatamente como sua própria entrada (nunca mesclada com a fala nova). Ver ADR 0004.
+_Avoid_: confundir com o Rascunho ao vivo, que é sempre a única Fala exibida na caixinha
 
 **Falante desconhecido** (Unknown Speaker):
 Rótulo usado quando o Meet não permite identificar quem está falando. Uma Fala com falante desconhecido nunca é fundida com a Entrada finalizada anterior de um falante nomeado diferente — sempre vira uma entrada própria.

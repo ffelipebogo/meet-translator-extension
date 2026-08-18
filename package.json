@@ -1,6 +1,6 @@
 {
   "name": "meet-translator-extension",
-  "version": "1.4.3",
+  "version": "1.5.1",
   "description": "Google Meet Live Translator Extension",
   "scripts": {
     "test": "node --test",
