@@ -16,17 +16,19 @@ Possível direção: dar timeout ao `fetch` e, ao descartar por sessão obsoleta
 erro em vez de deixá-la no limbo — mas isso precisa de uma decisão sobre a mensagem/estado exibido
 para esse caso específico (diferente de um erro de API normal).
 
-## 2. Texto da própria UI do Meet às vezes é capturado como se fosse fala
+## 2. ~~Texto da própria UI do Meet às vezes é capturado como se fosse fala~~ (corrigido em v1.5.2)
 
 Os seletores em `CONFIG.CAPTION_SELECTORS`/`findCaptionContainer` (já descritos como "heurísticas
-frágeis" na ADR 0001) por vezes casam com o container errado do painel de legendas — capturando a
+frágeis" na ADR 0001) por vezes casavam com o container errado do painel de legendas — capturando a
 lista de nomes de participantes concatenada com o rótulo do botão "Jump to bottom" do Meet, em vez do
-texto da legenda atual. Confirmado no export real: uma Entrada finalizada cujo `original` era só nomes
-de participantes + "arrow_downward Jump to bottom", sem nenhuma fala real.
+texto da legenda atual. Confirmado no export real (2026-08-21): toda vez que isso ocorria, o `original`
+continha a ligadura do ícone Material Symbols `arrow_downward` + "Jump to bottom".
 
-Possível direção: alguma heurística de rejeição (ex.: texto que é só uma lista de nomes conhecidos do
-painel, ou contém rótulos de UI conhecidos) antes de aceitar um texto como legenda — precisa de
-investigação de quais seletores exatos casam errado e quando.
+Corrigido rejeitando a captura em `handleCaptionChange` (content.js) quando o texto contém algum
+marcador de `CONFIG.CAPTION_NOISE_MARKERS` — nenhuma Fala/Entrada é criada a partir desse texto. Não
+resolve a causa raiz (seletor errado), só evita que o lixo vá para o histórico/exportação; se o Meet
+mudar o rótulo do botão ou a extensão passar a capturar outro tipo de ruído de UI, será preciso outro
+marcador.
 
 ## 3. Entrada finalizada com erro nunca pode ser re-tentada manualmente
 

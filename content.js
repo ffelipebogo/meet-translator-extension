@@ -1436,8 +1436,17 @@
   function extractCaptionData(element) {
     const text = extractCaptionText(element);
     const speaker = findSpeakerName(element);
-    
+
     return { text, speaker };
+  }
+
+  /**
+   * Detecta texto capturado por engano do chrome da UI do Meet (painel de participantes
+   * concatenado com o botão "Jump to bottom") em vez da legenda real, quando um seletor de
+   * CONFIG.CAPTION_SELECTORS casa com o elemento errado. Ver docs/known-issues.md #2.
+   */
+  function isCaptionNoiseText(text) {
+    return CONFIG.CAPTION_NOISE_MARKERS.some(marker => text.includes(marker));
   }
 
   /**
@@ -1445,6 +1454,7 @@
    */
   function handleCaptionChange(text, speakerRaw = '') {
     if (!isActive || !text) return;
+    if (isCaptionNoiseText(text)) return;
 
     const resolvedSpeaker = resolveIncomingSpeakerLabel(speakerRaw);
 

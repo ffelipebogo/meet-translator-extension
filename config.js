@@ -95,6 +95,14 @@ const CONFIG = {
     '.a4cQT'                        // Container alternativo
   ],
 
+  // Fragmentos que só aparecem quando CAPTION_SELECTORS casa com o elemento errado (painel de
+  // participantes + botão "voltar ao fim" do Meet), nunca em fala real — usados para rejeitar a
+  // captura antes de tratá-la como legenda. Ver docs/known-issues.md #2 (confirmado em export real).
+  CAPTION_NOISE_MARKERS: [
+    'arrow_downward',               // Ligadura do ícone Material Symbols do botão "Jump to bottom"
+    'Jump to bottom'                // Rótulo do mesmo botão
+  ],
+
   // Configurações de performance
   LIVE_UTTERANCE_IDLE_TIMEOUT: 60000, // Rede de segurança: tempo sem NENHUMA atualização até finalizar uma Fala (ativa ou pausada) — ver ADR 0004
   MAX_PAUSED_SPEAKERS: 2,            // Quantos falantes "pausados" (trocaram de vez mas podem retomar) ficam em espera antes de virar Entrada finalizada — ver ADR 0004
@@ -146,7 +154,7 @@ const CONFIG = {
   },
 
   // Versão da extensão
-  VERSION: '1.5.1'
+  VERSION: '1.5.2'
 };
 
 // Exporta para uso em outros scripts (se necessário)
